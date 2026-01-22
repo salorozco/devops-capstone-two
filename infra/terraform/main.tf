@@ -50,13 +50,12 @@ resource "aws_security_group" "capstone_sg" {
 }
 
 resource "aws_security_group_rule" "ssh_from_self" {
-  type              = "ingress"
-  security_group_id = aws_security_group.capstone_sg.id
-
+  type                     = "ingress"
   description              = "SSH between instances in this SG"
   from_port                = 22
   to_port                  = 22
   protocol                 = "tcp"
+  security_group_id        = aws_security_group.capstone_sg.id
   source_security_group_id = aws_security_group.capstone_sg.id
 }
 
@@ -104,9 +103,10 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 
   content = templatefile("${path.module}/inventory.tpl", {
-    jenkins_manager_ip = aws_instance.jenkins_manager.public_ip
-    jenkins_worker_ip  = aws_instance.jenkins_worker.public_ip
-    app_server_ip      = aws_instance.app_server.public_ip
+    jenkins_manager_ip         = aws_instance.jenkins_manager.public_ip
+    jenkins_worker_public_ip   = aws_instance.jenkins_worker.public_ip
+    jenkins_worker_private_ip  = aws_instance.jenkins_worker.private_ip
+    app_server_ip              = aws_instance.app_server.public_ip
   })
 }
 

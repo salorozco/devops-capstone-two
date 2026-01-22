@@ -1,0 +1,67 @@
+jenkins:
+  systemMessage: "Capstone Jenkins (bootstrapped by Ansible + JCasC)"
+  numExecutors: 2
+  mode: NORMAL
+  disableRememberMe: false
+
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          # password is injected by Ansible into /etc/default/jenkins as an env var
+          password: "${JENKINS_ADMIN_PASSWORD}"
+
+  authorizationStrategy:
+    globalMatrix:
+      permissions:
+        - "Overall/Administer:admin"
+        - "Overall/Read:authenticated"
+        - "Job/Read:authenticated"
+        - "View/Read:authenticated"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "jenkins-agent-ssh"
+              username: "ubuntu"
+              description: "SSH key used by controller to connect to the worker"
+              privateKeySource:
+                directEntry:
+                  # read the key from a file on the controller (manager)
+                  privateKey: "${readFile:/var/lib/jenkins/.ssh/jenkins_agent}"
+
+nodes:
+  - permanent:
+      name: "jenkins-worker-1"
+      description: "EC2 worker node"
+      remoteFS: "/home/ubuntu/jenkins"
+      numExecutors: 2
+      mode: NORMAL
+      labelString: "linux docker worker"
+      launcher:
+        ssh:
+          host: "${JENKINS_WORKER_PRIVATE_IP}"
+          port: 22
+          credentialsId: "jenkins-agent-ssh"
+          launchTimeoutSeconds: 60
+          maxNumRetries: 10
+          retryWaitTime: 15
+          sshHostKeyVerificationStrategy: "nonVerifyingKeyVerificationStrategy"
+
+jobs:
+  - script: >
+      job('seed') {
+        description('Seed job (created by JCasC). Runs Job DSL from local file.')
+        logRotator { numToKeep(20) }
+        steps {
+          dsl {
+            external('infra/ansible/files/jenkins/seed.groovy')
+            removeAction('IGNORE')
+            ignoreExisting(false)
+          }
+        }
+      }
