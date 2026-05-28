@@ -40,20 +40,26 @@
         group: ubuntu
         mode: "0755"
 
-- name: Jenkins Manager install + bootstrap (JCasC + plugins + seed)
+- name: Jenkins Manager install + bootstrap (JCasC + plugins + agent key + node)
   hosts: jenkins_manager
   become: yes
   vars:
     jenkins_http_port: 8080
     jenkins_admin_password: "ChangeMe-Admin-Password"
+
     jcasc_dir: /var/lib/jenkins/casc
     plugins_file: /var/lib/jenkins/plugins.txt
-    # Debian/Ubuntu package installs the war here
+
     jenkins_war: /usr/share/java/jenkins.war
     plugin_mgr_jar: /opt/jenkins-plugin-manager.jar
     plugin_mgr_version: "2.13.2"
 
+    controller_ssh_dir: /var/lib/jenkins/.ssh
+    controller_agent_key: /var/lib/jenkins/.ssh/jenkins_agent
+    controller_agent_pub: /var/lib/jenkins/.ssh/jenkins_agent.pub
+
   tasks:
+    # --- prereqs + Jenkins install ---
     - name: Install prerequisites
       apt:
         name:
@@ -71,7 +77,6 @@
         name: openjdk-17-jre
         state: present
 
-    # ---- Jenkins repo key + repo (this is the key fix you just validated) ----
     - name: Ensure apt keyrings directory exists
       file:
         path: /etc/apt/keyrings
@@ -104,11 +109,12 @@
         name: jenkins
         state: present
 
-    - name: Stop Jenkins (we'll install plugins + config before first real boot)
+    - name: Stop Jenkins (install plugins + config first)
       systemd:
         name: jenkins
         state: stopped
 
+    # --- plugins (offline via plugin manager) ---
     - name: Copy plugins.txt to controller
       copy:
         src: files/jenkins/plugins.txt
@@ -131,87 +137,21 @@
         group: jenkins
         mode: "0755"
 
-    - name: Install plugins from plugins.txt (into /var/lib/jenkins/plugins)
+    - name: Install plugins from plugins.txt
       shell: |
         set -euo pipefail
-        java -jar "/opt/jenkins-plugin-manager.jar" \
-          --war "/usr/share/java/jenkins.war" \
-          --plugin-file "/var/lib/jenkins/plugins.txt" \
+        java -jar "{{ plugin_mgr_jar }}" \
+          --war "{{ jenkins_war }}" \
+          --plugin-file "{{ plugins_file }}" \
           --plugin-download-directory /var/lib/jenkins/plugins
         chown -R jenkins:jenkins /var/lib/jenkins/plugins
       args:
         executable: /bin/bash
 
-    # ---- JCasC config drop ----
-    - name: Create JCasC directory
-      file:
-        path: "{{ jcasc_dir }}"
-        state: directory
-        owner: jenkins
-        group: jenkins
-        mode: "0755"
-
-    - name: Copy JCasC YAML
-      copy:
-        src: files/jenkins/jenkins.yaml
-        dest: "{{ jcasc_dir }}/jenkins.yaml"
-        owner: jenkins
-        group: jenkins
-        mode: "0644"
-
-    - name: Create systemd override dir for Jenkins
-      file:
-        path: /etc/systemd/system/jenkins.service.d
-        state: directory
-        mode: "0755"
-
-    - name: Set worker private IP fact from inventory host var
-      set_fact:
-        jenkins_worker_private_ip: "{{ hostvars[groups['jenkins_worker'][0]].jenkins_private_ip }}"    
-
-    - name: Set Jenkins env vars via systemd override
-      copy:
-        dest: /etc/systemd/system/jenkins.service.d/override.conf
-        owner: root
-        group: root
-        mode: "0644"
-        content: |
-          [Service]
-          Environment="CASC_JENKINS_CONFIG={{ jcasc_dir }}/jenkins.yaml"
-          Environment="JENKINS_ADMIN_PASSWORD={{ jenkins_admin_password }}"
-          Environment="JENKINS_WORKER_PRIVATE_IP={{ jenkins_worker_private_ip }}"
-
-    - name: Reload systemd and restart Jenkins
-      shell: |
-        systemctl daemon-reload
-        systemctl restart jenkins
-      args:
-        executable: /bin/bash
-
-    - name: Restart Jenkins to apply env vars
-      systemd:
-        name: jenkins
-        state: restarted 
-
-    - name: Show values being injected
-      debug:
-        msg:
-          - "Worker private IP: {{ jenkins_worker_private_ip }}"
-          - "Admin password: {{ jenkins_admin_password }}"
-          - "CASC file: {{ jcasc_dir }}/jenkins.yaml"   
-
-    # ---- Disable setup wizard + set env vars for JCasC and admin password ----
-    - name: Disable Jenkins setup wizard in /etc/default/jenkins
-      lineinfile:
-        path: /etc/default/jenkins
-        regexp: '^JAVA_ARGS='
-        line: 'JAVA_ARGS="$JAVA_ARGS -Djenkins.install.runSetupWizard=false"'
-        create: yes
-
-    # ---- Create SSH key for agents (owned by jenkins user) ----
+    # --- controller SSH key used to connect to worker ---
     - name: Ensure jenkins .ssh dir exists
       file:
-        path: /var/lib/jenkins/.ssh
+        path: "{{ controller_ssh_dir }}"
         state: directory
         owner: jenkins
         group: jenkins
@@ -220,21 +160,76 @@
     - name: Generate SSH keypair for Jenkins agent connections (if missing)
       shell: |
         set -euo pipefail
-        if [ ! -f /var/lib/jenkins/.ssh/jenkins_agent ]; then
-          sudo -u jenkins ssh-keygen -t ed25519 -N "" -f /var/lib/jenkins/.ssh/jenkins_agent
+        if [ ! -f "{{ controller_agent_key }}" ]; then
+          sudo -u jenkins ssh-keygen -t ed25519 -N "" -f "{{ controller_agent_key }}"
         fi
-        chmod 600 /var/lib/jenkins/.ssh/jenkins_agent
-        chmod 644 /var/lib/jenkins/.ssh/jenkins_agent.pub
+        chown jenkins:jenkins "{{ controller_agent_key }}" "{{ controller_agent_pub }}"
+        chmod 600 "{{ controller_agent_key }}"
+        chmod 644 "{{ controller_agent_pub }}"
       args:
         executable: /bin/bash
-        creates: /var/lib/jenkins/.ssh/jenkins_agent
+        creates: "{{ controller_agent_key }}"
 
-    - name: Read Jenkins agent public key
+    - name: Read controller private key (for embedding into JCasC credential)
       slurp:
-        src: /var/lib/jenkins/.ssh/jenkins_agent.pub
-      register: jenkins_agent_pub
+        src: "{{ controller_agent_key }}"
+      register: controller_agent_priv_b64
 
-    # ---- Start Jenkins now that plugins + config are in place ----
+    - name: Read controller public key (for worker authorized_keys)
+      slurp:
+        src: "{{ controller_agent_pub }}"
+      register: controller_agent_pub_b64
+
+    - name: Compute worker private IP from inventory host var
+      set_fact:
+        jenkins_worker_private_ip: "{{ hostvars[groups['jenkins_worker'][0]].jenkins_private_ip }}"
+
+    - name: Create JCasC directory
+      file:
+        path: "{{ jcasc_dir }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: "0755"
+
+    - name: Render JCasC YAML (inject password + worker IP + controller private key)
+      template:
+        src: templates/jenkins/jenkins.yaml.j2
+        dest: "{{ jcasc_dir }}/jenkins.yaml"
+        owner: jenkins
+        group: jenkins
+        mode: "0644"
+      vars:
+        jcasc_admin_password: "{{ jenkins_admin_password }}"
+        jcasc_worker_private_ip: "{{ jenkins_worker_private_ip }}"
+        jcasc_controller_private_key: "{{ controller_agent_priv_b64.content | b64decode }}"
+
+    # --- systemd drop-in: enable wizard disable + point Jenkins to JCasC file ---
+    - name: Create systemd override dir for Jenkins
+      file:
+        path: /etc/systemd/system/jenkins.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Write Jenkins systemd drop-in (JAVA_OPTS only)
+      copy:
+        dest: /etc/systemd/system/jenkins.service.d/override.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false -Dcasc.jenkins.config={{ jcasc_dir }}/jenkins.yaml"
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Reset failed state (avoid StartLimit lockouts)
+      shell: systemctl reset-failed jenkins || true
+      args:
+        executable: /bin/bash
+
     - name: Start Jenkins
       systemd:
         name: jenkins
@@ -247,56 +242,23 @@
         port: "{{ jenkins_http_port }}"
         timeout: 240
 
-    - name: Compute worker private IP (prefer ansible_host from inventory)
-      set_fact:
-        jenkins_worker_private_ip: >-
-          {{
-            hostvars[groups['jenkins_worker'][0]].ansible_host
-              | default(hostvars[groups['jenkins_worker'][0]].inventory_hostname)
-          }}    
-
-    # ---- Provide worker private IP to JCasC via env var + reload ----
-    - name: Get jenkins_worker private IP from inventory hostvars
-      set_fact:
-        jenkins_worker_private_ip: "{{ hostvars[groups['jenkins_worker'][0]].ansible_host | default(hostvars[groups['jenkins_worker'][0]].inventory_hostname) }}"
-
-    - name: Ensure worker private IP env var exists for JCasC
-      lineinfile:
-        path: /etc/default/jenkins
-        regexp: '^export JENKINS_WORKER_PRIVATE_IP='
-        line: "export JENKINS_WORKER_PRIVATE_IP={{ jenkins_worker_private_ip }}"
-        create: yes
-
-    - name: Restart Jenkins to apply worker IP for node definition
-      systemd:
-        name: jenkins
-        state: restarted
-
-    - name: Wait for Jenkins again after restart
-      wait_for:
-        host: 127.0.0.1
-        port: "{{ jenkins_http_port }}"
-        timeout: 240
-
-    - name: Show admin login info
+    - name: Show login + node info
       debug:
         msg:
           - "Jenkins is up on http://<JENKINS_MANAGER_PUBLIC_IP>:8080"
           - "Admin user: admin"
-          - "Admin password (from Ansible var): {{ jenkins_admin_password }}"
-          - "Worker private IP used for SSH: {{ jenkins_worker_private_ip }}"
+          - "Admin password: {{ jenkins_admin_password }}"
+          - "Worker private IP: {{ jenkins_worker_private_ip }}"
 
 - name: Authorize Jenkins controller SSH key on worker
   hosts: jenkins_worker
   become: yes
   vars:
     controller_host: "{{ groups['jenkins_manager'][0] }}"
-    controller_pubkey_path: /var/lib/jenkins/.ssh/jenkins_agent.pub
-
   tasks:
-    - name: Read controller public key directly from controller host
+    - name: Read controller public key from controller
       slurp:
-        src: "{{ controller_pubkey_path }}"
+        src: /var/lib/jenkins/.ssh/jenkins_agent.pub
       delegate_to: "{{ controller_host }}"
       run_once: true
       register: controller_pubkey

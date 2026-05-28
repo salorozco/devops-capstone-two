@@ -103,10 +103,10 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 
   content = templatefile("${path.module}/inventory.tpl", {
-    jenkins_manager_ip         = aws_instance.jenkins_manager.public_ip
+    jenkins_manager_public_ip  = aws_instance.jenkins_manager.public_ip
     jenkins_worker_public_ip   = aws_instance.jenkins_worker.public_ip
     jenkins_worker_private_ip  = aws_instance.jenkins_worker.private_ip
-    app_server_ip              = aws_instance.app_server.public_ip
-  })
+    app_server_public_ip       = aws_instance.app_server.public_ip
+})
 }
 

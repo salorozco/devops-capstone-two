@@ -4,6 +4,9 @@ jenkins:
   mode: NORMAL
   disableRememberMe: false
 
+  location:
+    url: "http://${JENKINS_PUBLIC_URL}:8080/"
+
   securityRealm:
     local:
       allowsSignup: false
