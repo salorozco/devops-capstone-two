@@ -37,6 +37,14 @@ resource "aws_security_group" "capstone_sg" {
     cidr_blocks = [var.my_ip_cidr]
   }
 
+  ingress {
+    description = "SSH between instances in this SG"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    self        = true
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -48,17 +56,6 @@ resource "aws_security_group" "capstone_sg" {
     Name = "capstone-sg"
   }
 }
-
-resource "aws_security_group_rule" "ssh_from_self" {
-  type                     = "ingress"
-  description              = "SSH between instances in this SG"
-  from_port                = 22
-  to_port                  = 22
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.capstone_sg.id
-  source_security_group_id = aws_security_group.capstone_sg.id
-}
-
 
 resource "aws_instance" "jenkins_manager" {
   ami                         = data.aws_ssm_parameter.ubuntu_2204_ami.value
