@@ -36,8 +36,9 @@ ssh "${SSH_OPTS[@]}" "${SSH_USER}@${APP_SERVER_HOST}" "bash -s" <<REMOTE
   DOCKERHUB_USERNAME=$REMOTE_DOCKERHUB_USERNAME
   DOCKERHUB_TOKEN_B64=$REMOTE_DOCKERHUB_TOKEN_B64
 
+  export DOCKER_CONFIG="\$(mktemp -d)"
   DOCKERHUB_TOKEN="\$(printf '%s' "\$DOCKERHUB_TOKEN_B64" | base64 -d)"
-  trap 'docker logout >/dev/null 2>&1 || true' EXIT
+  trap 'docker logout >/dev/null 2>&1 || true; rm -rf "\$DOCKER_CONFIG"' EXIT
 
   printf '%s\n' "\$DOCKERHUB_TOKEN" | docker login -u "\$DOCKERHUB_USERNAME" --password-stdin
   unset DOCKERHUB_TOKEN DOCKERHUB_TOKEN_B64

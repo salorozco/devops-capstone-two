@@ -5,3 +5,4 @@ ssh-credentials:latest
 workflow-aggregator:latest
 git:latest
 job-dsl:latest
+pipeline-graph-view:latest

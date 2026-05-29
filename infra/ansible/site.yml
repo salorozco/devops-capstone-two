@@ -44,9 +44,11 @@
   hosts: app_server
   become: yes
   tasks:
-    - name: Install Docker
+    - name: Install Docker + smoke test tools
       apt:
-        name: docker.io
+        name:
+          - docker.io
+          - curl
         state: present
         update_cache: yes
 
