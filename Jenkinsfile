@@ -16,12 +16,12 @@ pipeline {
   stages {
     stage('Validate') {
       steps {
-        sh '''
+        sh '''#!/usr/bin/env bash
           set -euo pipefail
           test -n "$APP_SERVER_HOST"
           test -f app/index.html
           test -f Dockerfile
-          test -x scripts/deploy_app.sh
+          test -f scripts/deploy_app.sh
         '''
       }
     }
@@ -35,7 +35,7 @@ pipeline {
     stage('Deploy') {
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'agent-ssh', keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-          sh './scripts/deploy_app.sh'
+          sh 'bash scripts/deploy_app.sh'
         }
       }
     }
