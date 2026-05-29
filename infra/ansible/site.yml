@@ -15,7 +15,7 @@
     - name: Install Java + Docker
       apt:
         name:
-          - openjdk-17-jre
+          - openjdk-21-jre
           - docker.io
         state: present
         update_cache: yes
@@ -40,12 +40,44 @@
         group: ubuntu
         mode: "0755"
 
+- name: App Server setup
+  hosts: app_server
+  become: yes
+  tasks:
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+
+    - name: Enable and start Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Create app deploy directory
+      file:
+        path: /opt/capstone-app
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
 - name: Jenkins Manager install + bootstrap (JCasC + plugins + agent key + node)
   hosts: jenkins_manager
   become: yes
   vars:
     jenkins_http_port: 8080
     jenkins_admin_password: "{{ lookup('env', 'JENKINS_ADMIN_PASSWORD') }}"
+    github_username: "{{ lookup('env', 'GITHUB_USERNAME') }}"
+    github_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
 
     jcasc_dir: /var/lib/jenkins/casc
     plugins_file: /var/lib/jenkins/plugins.txt
@@ -65,6 +97,14 @@
           - jenkins_admin_password | trim | length > 0
         fail_msg: "Set JENKINS_ADMIN_PASSWORD in your shell or repo-root .env before running this playbook."
 
+    - name: Require GitHub credentials
+      assert:
+        that:
+          - github_username | trim | length > 0
+          - github_token | trim | length > 0
+        fail_msg: "Set GITHUB_USERNAME and GITHUB_TOKEN in your shell or repo-root .env before running this playbook."
+      no_log: true
+
     # --- prereqs + Jenkins install ---
     - name: Install prerequisites
       apt:
@@ -80,7 +120,7 @@
 
     - name: Install Java (needed for Jenkins)
       apt:
-        name: openjdk-17-jre
+        name: openjdk-21-jre
         state: present
 
     - name: Ensure apt keyrings directory exists
@@ -194,9 +234,20 @@
         key: "{{ controller_agent_pub_b64.content | b64decode }}"
       delegate_to: "{{ groups['jenkins_worker'][0] }}"
 
+    - name: Authorize Jenkins controller SSH key on app server for deployments
+      authorized_key:
+        user: ubuntu
+        state: present
+        key: "{{ controller_agent_pub_b64.content | b64decode }}"
+      delegate_to: "{{ groups['app_server'][0] }}"
+
     - name: Compute worker private IP from inventory host var
       set_fact:
         jenkins_worker_private_ip: "{{ hostvars[groups['jenkins_worker'][0]].jenkins_private_ip }}"
+
+    - name: Compute app server private IP from inventory host var
+      set_fact:
+        app_server_private_ip: "{{ hostvars[groups['app_server'][0]].app_private_ip }}"
 
     - name: Create JCasC directory
       file:
@@ -216,7 +267,10 @@
       vars:
         jcasc_admin_password: "{{ jenkins_admin_password }}"
         jcasc_worker_private_ip: "{{ jenkins_worker_private_ip }}"
+        jcasc_app_server_private_ip: "{{ app_server_private_ip }}"
         jcasc_controller_private_key: "{{ controller_agent_priv_b64.content | b64decode }}"
+        jcasc_github_username: "{{ github_username }}"
+        jcasc_github_token: "{{ github_token }}"
       no_log: true
 
     # --- systemd drop-in: enable wizard disable + point Jenkins to JCasC file ---

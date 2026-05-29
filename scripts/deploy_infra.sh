@@ -19,6 +19,18 @@ if [[ -z "${JENKINS_ADMIN_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+if [[ -z "${GITHUB_USERNAME:-}" ]]; then
+  echo "ERROR: GITHUB_USERNAME is required."
+  echo "Set it in your shell or in $ENV_FILE"
+  exit 1
+fi
+
+if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+  echo "ERROR: GITHUB_TOKEN is required."
+  echo "Set it in your shell or in $ENV_FILE"
+  exit 1
+fi
+
 echo "== Terraform: init/plan/apply =="
 cd "$TF_DIR"
 terraform init -upgrade

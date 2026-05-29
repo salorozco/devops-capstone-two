@@ -173,7 +173,7 @@ Runs on:
 
 Current behavior:
 
-1. Installs Java 17 runtime.
+1. Installs Java 21 runtime.
 2. Installs Docker.
 3. Enables and starts Docker.
 4. Adds the `ubuntu` user to the `docker` group.
@@ -193,7 +193,7 @@ Current behavior:
 
 1. Requires `JENKINS_ADMIN_PASSWORD` from the Ansible control environment.
 2. Installs prerequisites for Jenkins.
-3. Installs Java 17 runtime.
+3. Installs Java 21 runtime.
 4. Adds the Jenkins apt signing key.
 5. Adds the Jenkins apt repository.
 6. Installs Jenkins.

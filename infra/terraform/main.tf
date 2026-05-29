@@ -107,6 +107,6 @@ resource "local_file" "ansible_inventory" {
     jenkins_worker_public_ip   = aws_instance.jenkins_worker.public_ip
     jenkins_worker_private_ip  = aws_instance.jenkins_worker.private_ip
     app_server_public_ip       = aws_instance.app_server.public_ip
-})
+    app_server_private_ip      = aws_instance.app_server.private_ip
+  })
 }
-

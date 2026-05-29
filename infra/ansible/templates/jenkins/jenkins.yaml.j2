@@ -42,6 +42,12 @@ credentials:
                 directEntry:
                   privateKey: |
 {{ jcasc_controller_private_key | indent(20, true) }}
+          - usernamePassword:
+              scope: GLOBAL
+              id: "github-http"
+              username: "{{ jcasc_github_username }}"
+              password: "{{ jcasc_github_token }}"
+              description: "GitHub HTTPS token for Jenkins pipeline jobs"
 
 jobs:
   - script: |
@@ -64,8 +70,35 @@ jobs:
       java -version || true
 
       echo "=== docker ==="
-      docker --version || true
-      docker ps || true
-      ''')
+          docker --version || true
+          docker ps || true
+          ''')
+        }
+      }
+  - script: |
+      pipelineJob('deploy-capstone-app') {
+        description('Builds the static Nginx app and deploys it to the app server.')
+
+        parameters {
+          stringParam('APP_SERVER_HOST', '{{ jcasc_app_server_private_ip }}', 'Private IP or DNS name of the app server')
+        }
+
+        triggers {
+          scm('H/2 * * * *')
+        }
+
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url('https://github.com/salorozco/devops-capstone-two.git')
+                  credentials('github-http')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile')
+          }
         }
       }
