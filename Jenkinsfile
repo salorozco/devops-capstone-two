@@ -1,10 +1,6 @@
 pipeline {
   agent { label 'worker' }
 
-  parameters {
-    string(name: 'APP_SERVER_HOST', defaultValue: '', description: 'Private IP or DNS name of the app server')
-  }
-
   environment {
     IMAGE_NAME = 'capstone-nginx'
     IMAGE_TAG = 'latest'
@@ -18,7 +14,7 @@ pipeline {
       steps {
         sh '''#!/usr/bin/env bash
           set -euo pipefail
-          test -n "$APP_SERVER_HOST"
+          : "${APP_SERVER_HOST:?APP_SERVER_HOST is required}"
           test -f app/index.html
           test -f Dockerfile
           test -f scripts/deploy_app.sh
