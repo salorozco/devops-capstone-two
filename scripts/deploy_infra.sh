@@ -5,6 +5,19 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF_DIR="$ROOT_DIR/infra/terraform"
 ANSIBLE_DIR="$ROOT_DIR/infra/ansible"
 INV_FILE="$ANSIBLE_DIR/inventory/hosts.ini"
+ENV_FILE="$ROOT_DIR/.env"
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  source "$ENV_FILE"
+  set +a
+fi
+
+if [[ -z "${JENKINS_ADMIN_PASSWORD:-}" ]]; then
+  echo "ERROR: JENKINS_ADMIN_PASSWORD is required."
+  echo "Set it in your shell or in $ENV_FILE"
+  exit 1
+fi
 
 echo "== Terraform: init/plan/apply =="
 cd "$TF_DIR"

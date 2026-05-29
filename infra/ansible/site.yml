@@ -45,7 +45,7 @@
   become: yes
   vars:
     jenkins_http_port: 8080
-    jenkins_admin_password: "ChangeMe-Admin-Password"
+    jenkins_admin_password: "{{ lookup('env', 'JENKINS_ADMIN_PASSWORD') }}"
 
     jcasc_dir: /var/lib/jenkins/casc
     plugins_file: /var/lib/jenkins/plugins.txt
@@ -59,6 +59,12 @@
     controller_agent_pub: /var/lib/jenkins/.ssh/jenkins_agent.pub
 
   tasks:
+    - name: Require Jenkins admin password
+      assert:
+        that:
+          - jenkins_admin_password | trim | length > 0
+        fail_msg: "Set JENKINS_ADMIN_PASSWORD in your shell or repo-root .env before running this playbook."
+
     # --- prereqs + Jenkins install ---
     - name: Install prerequisites
       apt:
@@ -174,11 +180,19 @@
       slurp:
         src: "{{ controller_agent_key }}"
       register: controller_agent_priv_b64
+      no_log: true
 
     - name: Read controller public key (for worker authorized_keys)
       slurp:
         src: "{{ controller_agent_pub }}"
       register: controller_agent_pub_b64
+
+    - name: Authorize Jenkins controller SSH key on worker before Jenkins starts
+      authorized_key:
+        user: ubuntu
+        state: present
+        key: "{{ controller_agent_pub_b64.content | b64decode }}"
+      delegate_to: "{{ groups['jenkins_worker'][0] }}"
 
     - name: Compute worker private IP from inventory host var
       set_fact:
@@ -198,11 +212,12 @@
         dest: "{{ jcasc_dir }}/jenkins.yaml"
         owner: jenkins
         group: jenkins
-        mode: "0644"
+        mode: "0600"
       vars:
         jcasc_admin_password: "{{ jenkins_admin_password }}"
         jcasc_worker_private_ip: "{{ jenkins_worker_private_ip }}"
         jcasc_controller_private_key: "{{ controller_agent_priv_b64.content | b64decode }}"
+      no_log: true
 
     # --- systemd drop-in: enable wizard disable + point Jenkins to JCasC file ---
     - name: Create systemd override dir for Jenkins
@@ -247,24 +262,5 @@
         msg:
           - "Jenkins is up on http://<JENKINS_MANAGER_PUBLIC_IP>:8080"
           - "Admin user: admin"
-          - "Admin password: {{ jenkins_admin_password }}"
+          - "Admin password: set from JENKINS_ADMIN_PASSWORD"
           - "Worker private IP: {{ jenkins_worker_private_ip }}"
-
-- name: Authorize Jenkins controller SSH key on worker
-  hosts: jenkins_worker
-  become: yes
-  vars:
-    controller_host: "{{ groups['jenkins_manager'][0] }}"
-  tasks:
-    - name: Read controller public key from controller
-      slurp:
-        src: /var/lib/jenkins/.ssh/jenkins_agent.pub
-      delegate_to: "{{ controller_host }}"
-      run_once: true
-      register: controller_pubkey
-
-    - name: Add controller public key to ubuntu authorized_keys on worker
-      authorized_key:
-        user: ubuntu
-        state: present
-        key: "{{ controller_pubkey.content | b64decode }}"

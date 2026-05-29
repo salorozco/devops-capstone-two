@@ -4,6 +4,7 @@ This file maps the current state of `devops-capstone-two` before we finish the p
 It describes what is wired today, what each file is responsible for, and where the flow currently stops.
 
 Date mapped: 2026-05-28
+Last updated: 2026-05-29
 
 ## High-level Goal
 
@@ -56,13 +57,16 @@ Current behavior:
    - Terraform directory: `infra/terraform`
    - Ansible directory: `infra/ansible`
    - Generated inventory path: `infra/ansible/inventory/hosts.ini`
-4. Runs `terraform init -upgrade`.
-5. Runs `terraform apply -auto-approve`.
-6. Checks that the generated Ansible inventory exists.
-7. Prints the inventory.
-8. Waits for SSH by running `ansible -i "$INV_FILE" all -m ping` up to 12 times.
-9. Runs `ansible-playbook -i "$INV_FILE" site.yml`.
-10. Prints `DONE`.
+   - Repo-root environment file: `.env`
+4. Loads `.env` if it exists.
+5. Requires `JENKINS_ADMIN_PASSWORD` from the shell environment or `.env`.
+6. Runs `terraform init -upgrade`.
+7. Runs `terraform apply -auto-approve`.
+8. Checks that the generated Ansible inventory exists.
+9. Prints the inventory.
+10. Waits for SSH by running `ansible -i "$INV_FILE" all -m ping` up to 12 times.
+11. Runs `ansible-playbook -i "$INV_FILE" site.yml`.
+12. Prints `DONE`.
 
 Important: this script creates or updates AWS resources because it runs `terraform apply`.
 
@@ -187,49 +191,54 @@ Runs on:
 
 Current behavior:
 
-1. Installs prerequisites for Jenkins.
-2. Installs Java 17 runtime.
-3. Adds the Jenkins apt signing key.
-4. Adds the Jenkins apt repository.
-5. Installs Jenkins.
-6. Stops Jenkins before plugin and config setup.
-7. Copies `infra/ansible/files/jenkins/plugins.txt` to the controller.
-8. Downloads the Jenkins plugin installation manager jar.
-9. Installs Jenkins plugins into `/var/lib/jenkins/plugins`.
-10. Creates `/var/lib/jenkins/.ssh`.
-11. Generates an SSH keypair for the Jenkins controller if missing.
-12. Reads the generated private key.
-13. Reads the generated public key.
-14. Pulls the worker private IP from the generated inventory.
-15. Creates the JCasC directory at `/var/lib/jenkins/casc`.
-16. Renders `infra/ansible/templates/jenkins/jenkins.yaml.j2`.
-17. Writes a systemd override so Jenkins starts with:
+1. Requires `JENKINS_ADMIN_PASSWORD` from the Ansible control environment.
+2. Installs prerequisites for Jenkins.
+3. Installs Java 17 runtime.
+4. Adds the Jenkins apt signing key.
+5. Adds the Jenkins apt repository.
+6. Installs Jenkins.
+7. Stops Jenkins before plugin and config setup.
+8. Copies `infra/ansible/files/jenkins/plugins.txt` to the controller.
+9. Downloads the Jenkins plugin installation manager jar.
+10. Installs Jenkins plugins into `/var/lib/jenkins/plugins`.
+11. Creates `/var/lib/jenkins/.ssh`.
+12. Generates an SSH keypair for the Jenkins controller if missing.
+13. Reads the generated private key with Ansible logging disabled.
+14. Reads the generated public key.
+15. Authorizes the controller public key on the Jenkins worker before Jenkins starts.
+16. Pulls the worker private IP from the generated inventory.
+17. Creates the JCasC directory at `/var/lib/jenkins/casc`.
+18. Renders `infra/ansible/templates/jenkins/jenkins.yaml.j2` with mode `0600` and Ansible logging disabled.
+19. Writes a systemd override so Jenkins starts with:
     - setup wizard disabled
     - JCasC config path set
-18. Starts Jenkins.
-19. Waits for Jenkins on port `8080`.
-20. Prints login and worker information.
+20. Starts Jenkins.
+21. Waits for Jenkins on port `8080`.
+22. Prints login and worker information without printing the admin password value.
 
-Current hardcoded Jenkins admin password:
+Current Jenkins admin password source:
 
 ```text
-ChangeMe-Admin-Password
+JENKINS_ADMIN_PASSWORD
 ```
 
-Current concern:
+Current secret-handling state:
 
-- The rendered JCasC file is written with mode `0644`, but it contains a private key.
+- The repo-root `.env` file is ignored by git.
+- `.env.example` documents the required local variable.
+- The rendered JCasC file is written with mode `0600` because it contains a private key.
+- Sensitive private-key read/render tasks use `no_log: true`.
 
-### Play 4: Authorize Jenkins controller SSH key on worker
+### Jenkins worker SSH authorization
 
-Runs on:
+Runs during:
 
-- Jenkins worker
+- Jenkins manager bootstrap play, delegated to the Jenkins worker
 
 Current behavior:
 
-1. Reads the Jenkins controller public key from the manager.
-2. Adds that public key to the worker `ubuntu` user's `authorized_keys`.
+1. Reads the Jenkins controller public key on the manager.
+2. Adds that public key to the worker `ubuntu` user's `authorized_keys` before Jenkins starts.
 
 Purpose:
 
@@ -254,14 +263,15 @@ Current intended Jenkins setup:
 - SSH private key credential named `agent-ssh`.
 - Permanent node named `jenkins-worker-1`.
 - Worker remote filesystem: `/home/ubuntu/jenkins`.
-- Worker label string: `linux docker`.
+- Worker label string: `linux docker worker`.
 - SSH launcher points to the worker private IP.
+- Test job named `test-agent`.
 
-Current issue:
+Current state:
 
-- The template currently has two top-level `jenkins:` sections.
-- YAML/JCasC may treat the second `jenkins:` block as replacing the first one.
-- That means the node block and the security/admin block need to be merged before this is reliable.
+- The active JCasC template has one top-level `jenkins:` block.
+- Jenkins security/admin config and the worker node config are in the same block.
+- Credentials and jobs remain separate top-level JCasC sections.
 
 ## Jenkins Plugins
 
@@ -292,13 +302,13 @@ Possible missing plugin for the next stage:
 
 - `ssh-agent`, if the deploy pipeline uses an SSH credential inside a Jenkins pipeline step.
 
-## Seed Job
+## Test Agent Job
 
-File: `infra/ansible/files/jenkins/seed.groovy`
+Defined in: `infra/ansible/templates/jenkins/jenkins.yaml.j2`
 
 Current behavior:
 
-- Defines one freestyle job called `test-agent`.
+- The active JCasC template defines one freestyle job called `test-agent`.
 - Runs basic checks:
   - `whoami`
   - `hostname`
@@ -306,17 +316,12 @@ Current behavior:
   - `docker --version`
   - `docker ps`
 
-Current issue:
+Current wiring state:
 
 - The job uses label `worker`.
-- The current JCasC worker label is `linux docker`.
-- The job will not match the worker unless the worker label includes `worker` or the job label is changed.
-
-Current wiring issue:
-
-- The active JCasC template does not currently create a seed job.
-- There is an older static JCasC file at `infra/ansible/files/jenkins/jenkins.yaml` that contains a `jobs:` block, but `site.yml` renders the newer template instead.
-- So `seed.groovy` exists, but it is not currently wired into the active Jenkins config.
+- The JCasC worker label is `linux docker worker`.
+- The job should match the Jenkins worker.
+- The old static JCasC file and standalone `seed.groovy` file were removed to keep one source of truth.
 
 ## App Server Flow
 
@@ -336,37 +341,25 @@ What is missing:
 
 ## Current Gaps Before Finishing Project 2
 
-The infrastructure is partially complete. These are the main gaps to plan before editing:
+The Jenkins manager/worker bootstrap is now more complete. These are the remaining main gaps:
 
-1. Fix the active JCasC template so it has one valid `jenkins:` block.
-2. Decide whether the Jenkins worker label should be `linux docker worker` or whether the job label should change.
-3. Wire the seed job into active JCasC, or replace it with a real pipeline job.
-4. Add app server configuration in Ansible.
-5. Add app server SSH access for Jenkins.
-6. Add a real build/deploy flow.
-7. Add or confirm needed Jenkins plugins.
-8. Avoid hardcoding the Jenkins admin password.
-9. Protect the rendered JCasC file because it contains a private key.
-10. Decide whether unused Terraform variables should be removed or documented.
-11. Add the `local` provider requirement because Terraform uses `local_file`.
-12. Decide whether generated inventory should stay ignored and be recreated by Terraform.
+1. Add app server configuration in Ansible.
+2. Add app server SSH access for Jenkins.
+3. Add a real build/deploy flow.
+4. Add or confirm needed Jenkins plugins for the deploy pipeline.
+5. Decide whether unused Terraform variables should be removed or documented.
+6. Add the `local` provider requirement because Terraform uses `local_file`.
+7. Decide whether generated inventory should stay ignored and be recreated by Terraform.
 
-## Current Git State Notes
+## Current Jenkins Cleanup State
 
-At the time this was mapped, the repo already had local changes in:
+Completed after the original mapping:
 
-- `infra/ansible/files/jenkins/jenkins.yaml`
-- `infra/ansible/files/jenkins/plugins.txt`
-- `infra/ansible/site.yml`
-- `infra/terraform/inventory.tpl`
-- `infra/terraform/main.tf`
-
-The generated inventory was deleted from git status:
-
-- `infra/ansible/inventory/hosts.ini`
-
-There is also an untracked template directory:
-
-- `infra/ansible/templates/`
-
-These are documented as current local state, not reverted.
+- The duplicate active JCasC `jenkins:` blocks were merged.
+- The worker label was changed to `linux docker worker`.
+- The `test-agent` job is now defined inline in active JCasC.
+- The old static `files/jenkins/jenkins.yaml` file was removed.
+- The standalone `seed.groovy` file was removed.
+- Jenkins admin password now comes from `JENKINS_ADMIN_PASSWORD`.
+- The rendered JCasC file is written with mode `0600`.
+- Sensitive private-key tasks use `no_log: true`.

@@ -2,6 +2,7 @@
 # SSH keys
 *.pem
 *.key
+.env
 # Terraform
 **/.terraform/*
 **/.terraform.lock.hcl

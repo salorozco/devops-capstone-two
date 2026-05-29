@@ -14,6 +14,21 @@ jenkins:
     loggedInUsersCanDoAnything:
       allowAnonymousRead: false
 
+  nodes:
+    - permanent:
+        name: "jenkins-worker-1"
+        remoteFS: "/home/ubuntu/jenkins"
+        numExecutors: 2
+        mode: NORMAL
+        labelString: "linux docker worker"
+        retentionStrategy: "always"
+        launcher:
+          ssh:
+            host: "{{ jcasc_worker_private_ip }}"
+            port: 22
+            credentialsId: "agent-ssh"
+            sshHostKeyVerificationStrategy: "nonVerifyingKeyVerificationStrategy"
+
 credentials:
   system:
     domainCredentials:
@@ -28,18 +43,29 @@ credentials:
                   privateKey: |
 {{ jcasc_controller_private_key | indent(20, true) }}
 
-jenkins:
-  nodes:
-    - permanent:
-        name: "jenkins-worker-1"
-        remoteFS: "/home/ubuntu/jenkins"
-        numExecutors: 2
-        mode: NORMAL
-        labelString: "linux docker"
-        retentionStrategy: "always"
-        launcher:
-          ssh:
-            host: "{{ jcasc_worker_private_ip }}"
-            port: 22
-            credentialsId: "agent-ssh"
-            sshHostKeyVerificationStrategy: "nonVerifyingKeyVerificationStrategy"
+jobs:
+  - script: |
+      freeStyleJob('test-agent') {
+        description('Quick test job to verify agent + docker + java.')
+        label('worker')
+        logRotator { numToKeep(25) }
+
+        steps {
+          shell('''#!/usr/bin/env bash
+      set -euxo pipefail
+
+      echo "=== whoami ==="
+      whoami
+
+      echo "=== hostname ==="
+      hostname
+
+      echo "=== java ==="
+      java -version || true
+
+      echo "=== docker ==="
+      docker --version || true
+      docker ps || true
+      ''')
+        }
+      }

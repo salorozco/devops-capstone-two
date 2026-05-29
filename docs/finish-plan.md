@@ -1,7 +1,7 @@
 # Proposed Finish Plan
 
 This is the proposed plan for finishing `devops-capstone-two`.
-No infrastructure code has been changed by this plan file.
+It now reflects the Jenkins bootstrap cleanup completed after the original plan.
 
 ## Goal
 
@@ -47,17 +47,23 @@ Reason:
 
 ### 2. Fix Jenkins JCasC structure
 
-Files likely touched:
+Status: completed.
+
+Files touched:
 
 - `infra/ansible/templates/jenkins/jenkins.yaml.j2`
-- maybe `infra/ansible/files/jenkins/jenkins.yaml`
 
-Planned changes:
+Removed files:
+
+- `infra/ansible/files/jenkins/jenkins.yaml`
+
+Completed changes:
 
 1. Merge the duplicate top-level `jenkins:` sections into one valid block.
-2. Keep the admin user, authorization strategy, credentials, and node config together.
-3. Decide whether the old static `files/jenkins/jenkins.yaml` should be removed, archived, or kept as a reference.
-4. Set the Jenkins worker labels consistently.
+2. Keep the admin user, authorization strategy, and node config together under the active `jenkins:` block.
+3. Keep credentials and jobs as separate top-level JCasC sections.
+4. Remove the old static `files/jenkins/jenkins.yaml` file.
+5. Set the Jenkins worker labels consistently.
 
 Recommended label:
 
@@ -67,22 +73,30 @@ linux docker worker
 
 Reason:
 
-- The existing seed job expects label `worker`.
+- The test job expects label `worker`.
 - The worker is also a Linux Docker-capable node.
 
 ### 3. Harden Jenkins secrets handling
 
-Files likely touched:
+Status: completed for Jenkins manager bootstrap.
 
+Files touched:
+
+- `.env.example`
+- `.gitignore`
+- `scripts/deploy_infra.sh`
 - `infra/ansible/site.yml`
 - `infra/ansible/templates/jenkins/jenkins.yaml.j2`
 
-Planned changes:
+Completed changes:
 
 1. Stop hardcoding the Jenkins admin password directly in `site.yml`.
-2. Read it from an Ansible variable or environment variable.
+2. Read it from `JENKINS_ADMIN_PASSWORD`.
 3. Fail with a clear message if no password is supplied.
 4. Write rendered JCasC with stricter permissions because it contains a private key.
+5. Load repo-root `.env` from `scripts/deploy_infra.sh` if present.
+6. Keep real `.env` ignored and commit only `.env.example`.
+7. Suppress Ansible logging for sensitive private-key read/render tasks.
 
 Recommended rendered JCasC mode:
 
@@ -96,16 +110,21 @@ Reason:
 
 ### 4. Wire the Jenkins worker test job
 
-Files likely touched:
+Status: completed as an inline JCasC job.
 
-- `infra/ansible/files/jenkins/seed.groovy`
+Files touched:
+
 - `infra/ansible/templates/jenkins/jenkins.yaml.j2`
 - `infra/ansible/files/jenkins/plugins.txt`
 
-Planned changes:
+Removed files:
 
-1. Decide whether to keep the seed job as a first validation step.
-2. Wire `seed.groovy` into active JCasC if keeping it.
+- `infra/ansible/files/jenkins/seed.groovy`
+
+Completed changes:
+
+1. Define `test-agent` directly in the active JCasC template.
+2. Remove standalone `seed.groovy` to keep one source of truth.
 3. Confirm the job label matches the worker label.
 4. Keep the test job simple:
    - show hostname
@@ -149,7 +168,6 @@ Files likely touched:
 
 - `Jenkinsfile`
 - app files, if missing
-- `infra/ansible/files/jenkins/seed.groovy`
 - `infra/ansible/templates/jenkins/jenkins.yaml.j2`
 - `infra/ansible/files/jenkins/plugins.txt`
 
@@ -228,11 +246,11 @@ Do not run these unless explicitly requested:
 
 ## Suggested Next Step
 
-Start with the smallest reliable fix:
+Start with the next infrastructure/app-server checkpoint:
 
-1. Fix the duplicate `jenkins:` block in the JCasC template.
-2. Make the worker label match the test job.
-3. Wire the seed job.
-4. Validate locally.
+1. Fix Terraform hygiene and provider declarations.
+2. Add app server private IP to the generated inventory.
+3. Configure the app server with Docker and a deploy directory.
+4. Authorize Jenkins SSH access to the app server.
 
-That gives a clean checkpoint before adding the app server deploy flow.
+That gives a clean checkpoint before adding the real app deploy pipeline.
