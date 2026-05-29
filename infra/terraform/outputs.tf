@@ -10,6 +10,10 @@ output "app_server_public_ip" {
   value = aws_instance.app_server.public_ip
 }
 
+output "dockerhub_repository" {
+  value = "docker.io/${var.dockerhub_namespace}/${var.dockerhub_repository_name}"
+}
+
 output "ssh_commands" {
   value = {
     jenkins_manager = "ssh -o IdentitiesOnly=yes -i ~/.ssh/capstone-key.pem ubuntu@${aws_instance.jenkins_manager.public_ip}"

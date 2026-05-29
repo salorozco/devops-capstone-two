@@ -78,6 +78,10 @@
     jenkins_admin_password: "{{ lookup('env', 'JENKINS_ADMIN_PASSWORD') }}"
     github_username: "{{ lookup('env', 'GITHUB_USERNAME') }}"
     github_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+    dockerhub_username: "{{ lookup('env', 'DOCKERHUB_USERNAME') }}"
+    dockerhub_token: "{{ lookup('env', 'DOCKERHUB_TOKEN') }}"
+    dockerhub_namespace: "{{ lookup('env', 'DOCKERHUB_NAMESPACE') | default(lookup('env', 'DOCKERHUB_USERNAME'), true) }}"
+    dockerhub_repository_name: "{{ lookup('env', 'DOCKERHUB_REPOSITORY_NAME') | default('capstone-nginx', true) }}"
 
     jcasc_dir: /var/lib/jenkins/casc
     plugins_file: /var/lib/jenkins/plugins.txt
@@ -103,6 +107,16 @@
           - github_username | trim | length > 0
           - github_token | trim | length > 0
         fail_msg: "Set GITHUB_USERNAME and GITHUB_TOKEN in your shell or repo-root .env before running this playbook."
+      no_log: true
+
+    - name: Require Docker Hub credentials
+      assert:
+        that:
+          - dockerhub_username | trim | length > 0
+          - dockerhub_token | trim | length > 0
+          - dockerhub_namespace | trim | length > 0
+          - dockerhub_repository_name | trim | length > 0
+        fail_msg: "Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN in your shell or repo-root .env before running this playbook."
       no_log: true
 
     # --- prereqs + Jenkins install ---
@@ -271,6 +285,9 @@
         jcasc_controller_private_key: "{{ controller_agent_priv_b64.content | b64decode }}"
         jcasc_github_username: "{{ github_username }}"
         jcasc_github_token: "{{ github_token }}"
+        jcasc_dockerhub_username: "{{ dockerhub_username }}"
+        jcasc_dockerhub_token: "{{ dockerhub_token }}"
+        jcasc_image_repository: "docker.io/{{ dockerhub_namespace }}/{{ dockerhub_repository_name }}"
       no_log: true
 
     # --- systemd drop-in: enable wizard disable + point Jenkins to JCasC file ---

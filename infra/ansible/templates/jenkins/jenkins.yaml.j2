@@ -48,6 +48,12 @@ credentials:
               username: "{{ jcasc_github_username }}"
               password: "{{ jcasc_github_token }}"
               description: "GitHub HTTPS token for Jenkins pipeline jobs"
+          - usernamePassword:
+              scope: GLOBAL
+              id: "dockerhub"
+              username: "{{ jcasc_dockerhub_username }}"
+              password: "{{ jcasc_dockerhub_token }}"
+              description: "Docker Hub token for image pushes and pulls"
 
 jobs:
   - script: |
@@ -81,6 +87,7 @@ jobs:
 
         parameters {
           stringParam('APP_SERVER_HOST', '{{ jcasc_app_server_private_ip }}', 'Private IP or DNS name of the app server')
+          stringParam('IMAGE_REPOSITORY', '{{ jcasc_image_repository }}', 'Docker image repository to push and deploy')
         }
 
         triggers {

@@ -2,6 +2,16 @@ provider "aws" {
   region = var.aws_region
 }
 
+provider "docker" {}
+
+resource "docker_hub_repository" "capstone_app" {
+  namespace        = var.dockerhub_namespace
+  name             = var.dockerhub_repository_name
+  description      = "Capstone app image repository"
+  full_description = "Container images built and deployed by the Jenkins capstone pipeline."
+  private          = var.dockerhub_repository_private
+}
+
 # Ubuntu 22.04 AMI (stable) via SSM
 data "aws_ssm_parameter" "ubuntu_2204_ami" {
   name = "/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id"
@@ -100,10 +110,10 @@ resource "local_file" "ansible_inventory" {
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 
   content = templatefile("${path.module}/inventory.tpl", {
-    jenkins_manager_public_ip  = aws_instance.jenkins_manager.public_ip
-    jenkins_worker_public_ip   = aws_instance.jenkins_worker.public_ip
-    jenkins_worker_private_ip  = aws_instance.jenkins_worker.private_ip
-    app_server_public_ip       = aws_instance.app_server.public_ip
-    app_server_private_ip      = aws_instance.app_server.private_ip
+    jenkins_manager_public_ip = aws_instance.jenkins_manager.public_ip
+    jenkins_worker_public_ip  = aws_instance.jenkins_worker.public_ip
+    jenkins_worker_private_ip = aws_instance.jenkins_worker.private_ip
+    app_server_public_ip      = aws_instance.app_server.public_ip
+    app_server_private_ip     = aws_instance.app_server.private_ip
   })
 }

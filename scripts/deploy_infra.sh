@@ -31,6 +31,23 @@ if [[ -z "${GITHUB_TOKEN:-}" ]]; then
   exit 1
 fi
 
+if [[ -z "${DOCKERHUB_USERNAME:-}" ]]; then
+  echo "ERROR: DOCKERHUB_USERNAME is required."
+  echo "Set it in your shell or in $ENV_FILE"
+  exit 1
+fi
+
+if [[ -z "${DOCKERHUB_TOKEN:-}" ]]; then
+  echo "ERROR: DOCKERHUB_TOKEN is required."
+  echo "Set it in your shell or in $ENV_FILE"
+  exit 1
+fi
+
+export DOCKER_USERNAME="$DOCKERHUB_USERNAME"
+export DOCKER_PASSWORD="$DOCKERHUB_TOKEN"
+export TF_VAR_dockerhub_namespace="${DOCKERHUB_NAMESPACE:-$DOCKERHUB_USERNAME}"
+export TF_VAR_dockerhub_repository_name="${DOCKERHUB_REPOSITORY_NAME:-capstone-nginx}"
+
 echo "== Terraform: init/plan/apply =="
 cd "$TF_DIR"
 terraform init -upgrade
