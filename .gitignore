@@ -3,6 +3,10 @@
 *.pem
 *.key
 .env
+
+# Generated Ansible inventory
+infra/ansible/inventory/hosts.ini
+
 # Terraform
 **/.terraform/*
 **/.terraform.lock.hcl

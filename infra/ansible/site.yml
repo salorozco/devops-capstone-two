@@ -96,6 +96,21 @@
     controller_agent_key: /var/lib/jenkins/.ssh/jenkins_agent
     controller_agent_pub: /var/lib/jenkins/.ssh/jenkins_agent.pub
 
+  handlers:
+    - name: Restart Jenkins service
+      listen: Restart Jenkins
+      systemd:
+        name: jenkins
+        enabled: yes
+        state: restarted
+
+    - name: Wait for Jenkins after restart
+      listen: Restart Jenkins
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ jenkins_http_port }}"
+        timeout: 240
+
   tasks:
     - name: Require Jenkins admin password
       assert:
@@ -184,6 +199,7 @@
         owner: jenkins
         group: jenkins
         mode: "0644"
+      notify: Restart Jenkins
 
     - name: Download Jenkins plugin installation manager tool
       get_url:
@@ -291,6 +307,7 @@
         jcasc_dockerhub_token: "{{ dockerhub_token }}"
         jcasc_image_repository: "docker.io/{{ dockerhub_namespace }}/{{ dockerhub_repository_name }}"
       no_log: true
+      notify: Restart Jenkins
 
     # --- systemd drop-in: enable wizard disable + point Jenkins to JCasC file ---
     - name: Create systemd override dir for Jenkins
@@ -308,6 +325,7 @@
         content: |
           [Service]
           Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false -Dcasc.jenkins.config={{ jcasc_dir }}/jenkins.yaml"
+      notify: Restart Jenkins
 
     - name: Reload systemd
       systemd:
@@ -323,6 +341,9 @@
         name: jenkins
         enabled: yes
         state: started
+
+    - name: Apply pending Jenkins restart handlers
+      meta: flush_handlers
 
     - name: Wait for Jenkins to be reachable on port 8080
       wait_for:

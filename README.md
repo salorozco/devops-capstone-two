@@ -1,60 +1,112 @@
 # DevOps Capstone Two
 
-This repo is an AWS-based Jenkins CI/CD lab. It uses Terraform to create infrastructure, Ansible to configure servers, and Jenkins Configuration as Code to bootstrap a Jenkins controller with a worker node.
-
-The current checkpoint proves the infrastructure and Jenkins worker path first. The app server is created, but the real application deployment pipeline is still the next phase.
+This repo is an AWS-based Jenkins CI/CD lab. It uses Terraform for infrastructure, Ansible for server configuration, Jenkins Configuration as Code for Jenkins state, and Docker Hub as the image registry.
 
 ## Architecture
 
 ```text
-Local machine
-  |
-  | ./scripts/deploy_infra.sh
-  v
-Terraform
-  |
-  | creates AWS resources
-  v
-EC2 Jenkins manager
-EC2 Jenkins worker
-EC2 app server
-  |
-  | generated Ansible inventory
-  v
-Ansible
-  |
-  | installs/configures Jenkins and worker dependencies
-  v
-Jenkins manager
-  |
-  | SSH agent connection
-  v
-Jenkins worker
+GitHub main
+  -> Jenkins pipeline
+  -> Docker image build on Jenkins worker
+  -> Docker Hub push
+  -> App server pull
+  -> Container restart
+  -> Smoke test
 ```
 
-## Current Flow
+Provisioning flow:
 
-1. `scripts/deploy_infra.sh` loads repo-root `.env` if present.
-2. The script requires `JENKINS_ADMIN_PASSWORD`.
-3. Terraform creates:
-   - Jenkins manager EC2 instance
-   - Jenkins worker EC2 instance
-   - App server EC2 instance
-   - Security group rules
-   - Generated Ansible inventory
-4. Ansible configures all instances with baseline package updates.
-5. Ansible configures the Jenkins worker with Java, Docker, and a Jenkins workspace.
-6. Ansible installs Jenkins on the manager.
-7. Jenkins Configuration as Code creates:
-   - local `admin` user
-   - SSH credential for the worker
-   - permanent worker node named `jenkins-worker-1`
-   - test job named `test-agent`
-8. Jenkins starts on port `8080`.
+```text
+Local machine
+  -> scripts/deploy_infra.sh
+  -> Terraform creates AWS resources and Docker Hub repo
+  -> Terraform writes generated Ansible inventory
+  -> Ansible configures Jenkins manager, Jenkins worker, and app server
+  -> Jenkins runs the app deploy pipeline from Jenkinsfile
+```
 
-## Current Checkpoint
+## What Terraform Manages
 
-After running the deploy script, Jenkins should be available at:
+- Security group for SSH, Jenkins, and app access.
+- Jenkins manager EC2 instance.
+- Jenkins worker EC2 instance.
+- App server EC2 instance.
+- Generated Ansible inventory at `infra/ansible/inventory/hosts.ini`.
+- Docker Hub repository, for example:
+
+```text
+docker.io/salorozco23/capstone-nginx
+```
+
+Terraform state is still local in this repo. Remote state is intentionally not configured yet.
+
+## What Ansible Configures
+
+- Baseline apt cache updates on all servers.
+- Java and Docker on the Jenkins worker.
+- Docker and curl on the app server.
+- Jenkins installation on the manager.
+- Jenkins plugins, including Pipeline and Pipeline Graph View.
+- Jenkins admin user through JCasC.
+- Jenkins credentials for GitHub, Docker Hub, and SSH.
+- Jenkins worker node.
+- `test-agent` validation job.
+- `deploy-capstone-app` pipeline job.
+
+## Jenkins Pipeline
+
+The deploy job watches `main` with SCM polling and runs the root `Jenkinsfile`.
+
+Stages:
+
+```text
+Validate
+Prepare Image Tag
+Build Image
+Push Image
+Deploy
+Smoke Test
+Post Actions
+```
+
+The image is tagged with the Git commit SHA and also pushed as `latest`.
+
+Example:
+
+```text
+docker.io/salorozco23/capstone-nginx:<git-sha>
+docker.io/salorozco23/capstone-nginx:latest
+```
+
+The app server pulls the exact Git SHA image tag and restarts the `capstone-nginx` container on port `8081`.
+
+## Required Local Environment
+
+Create a repo-root `.env` file:
+
+```bash
+JENKINS_ADMIN_PASSWORD='your-jenkins-admin-password'
+GITHUB_USERNAME='your-github-username'
+GITHUB_TOKEN='your-github-token'
+DOCKERHUB_USERNAME='your-dockerhub-username'
+DOCKERHUB_TOKEN='your-dockerhub-token'
+DOCKERHUB_NAMESPACE='your-dockerhub-username-or-org'
+DOCKERHUB_REPOSITORY_NAME='capstone-nginx'
+```
+
+Do not commit `.env`. Use `.env.example` as the safe template.
+
+## Run
+
+From the repo root:
+
+```bash
+./scripts/deploy_infra.sh
+```
+
+This runs `terraform apply -auto-approve`, waits for SSH, then runs the Ansible playbook.
+
+After provisioning, Jenkins is available at:
 
 ```text
 http://<JENKINS_MANAGER_PUBLIC_IP>:8080
@@ -67,63 +119,37 @@ user: admin
 password: value from JENKINS_ADMIN_PASSWORD
 ```
 
-The expected validation job is:
+The app is available after a successful deploy job at:
 
 ```text
-test-agent
+http://<APP_SERVER_PUBLIC_IP>:8081
 ```
 
-That job verifies the worker can run shell commands and access Java and Docker.
+## Teardown
 
-## Required Local Files
+To stop AWS hourly charges, destroy the AWS resources. The Docker Hub repo can be preserved separately if desired.
 
-Create a repo-root `.env` file:
+The latest teardown preserved the Docker Hub repository and destroyed the EC2/security group resources.
 
-```bash
-JENKINS_ADMIN_PASSWORD='your-password-here'
-```
-
-Do not commit `.env`. It is ignored by git. Use `.env.example` as the safe template.
-
-## Run
-
-From the repo root:
-
-```bash
-./scripts/deploy_infra.sh
-```
-
-Important: this runs `terraform apply -auto-approve`, so it can create or update AWS resources.
-
-## What Is Not Finished Yet
-
-The app server is created, but the app deploy flow is not complete yet.
-
-Remaining work:
-
-1. Configure the app server with Docker and a deploy directory.
-2. Authorize Jenkins SSH access to the app server.
-3. Add a small deployable app.
-4. Add a `Jenkinsfile`.
-5. Create a Jenkins deploy pipeline.
-6. Expose the app on the configured app port, currently `8081`.
-
-## Safe Validation Commands
+## Validation
 
 ```bash
 cd infra/terraform
 terraform validate
-terraform plan
 ```
 
 ```bash
 cd infra/ansible
-JENKINS_ADMIN_PASSWORD=test-password ansible-playbook --syntax-check site.yml
+ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
 ```
 
-## Docs
+```bash
+bash -n scripts/deploy_infra.sh
+bash -n scripts/deploy_app.sh
+```
 
-More detail:
+## Notes
 
-- `docs/current-flow.md`
-- `docs/finish-plan.md`
+- `infra/ansible/inventory/hosts.ini` is generated by Terraform and ignored by Git.
+- Jenkins currently uses SCM polling. GitHub webhooks are a future production-style improvement.
+- Remote Terraform state is a future improvement and is not implemented yet.

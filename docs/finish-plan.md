@@ -1,256 +1,132 @@
-# Proposed Finish Plan
+# Finish Plan
 
-This is the proposed plan for finishing `devops-capstone-two`.
-It now reflects the Jenkins bootstrap cleanup completed after the original plan.
+Last updated: 2026-05-31
 
-## Goal
-
-Finish the Jenkins pipeline project so it can show a full DevOps flow:
+The core lab is now functional:
 
 ```text
 Terraform
-  -> EC2 Jenkins manager
-  -> EC2 Jenkins worker
-  -> EC2 app server
-  -> Ansible configures all servers
-  -> Jenkins runs a job on the worker
-  -> Jenkins deploys an app to the app server
+  -> Ansible
+  -> Jenkins as Code
+  -> Jenkins worker build
+  -> Docker Hub push
+  -> app server pull/restart
+  -> smoke test
 ```
 
-## Change Order
+## Completed
 
-### 1. Repo hygiene and Terraform fixes
+1. Terraform creates the AWS instances and security group.
+2. Terraform creates/manages the Docker Hub repository.
+3. Terraform generates the Ansible inventory.
+4. Ansible configures the Jenkins manager, Jenkins worker, and app server.
+5. Jenkins is bootstrapped through JCasC.
+6. Jenkins credentials are created through JCasC.
+7. Jenkins worker node is configured.
+8. `test-agent` verifies the worker.
+9. `deploy-capstone-app` runs from the root `Jenkinsfile`.
+10. The pipeline builds and pushes Docker images to Docker Hub.
+11. The app server pulls and runs the exact Git SHA image tag.
+12. The pipeline smoke-tests the running container.
+13. Docker credentials are cleaned up with temporary Docker config directories.
+14. Pipeline Graph View is installed for a better Jenkins UI.
+15. Generated Ansible inventory is ignored by Git.
 
-Files likely touched:
+## Remaining Production-style Improvements
 
-- `infra/terraform/versions.tf`
-- `infra/terraform/main.tf`
-- `infra/terraform/variables.tf`
-- `infra/terraform/inventory.tpl`
-- `.gitignore`
-- maybe `infra/ansible/inventory/.gitkeep`
+### 1. GitHub webhook
 
-Planned changes:
-
-1. Add the `hashicorp/local` provider requirement because `main.tf` uses `local_file`.
-2. Format Terraform files with `terraform fmt`.
-3. Decide what to do with unused variables:
-   - `subnet_ids`
-   - `security_group_id`
-4. Add app server private IP to the generated inventory if Jenkins deploys over the private network.
-5. Ignore generated `infra/ansible/inventory/hosts.ini`, but keep the inventory directory in git with `.gitkeep`.
-6. Consider a security group self-rule for the app port if worker/app communication needs private traffic.
-
-Reason:
-
-- Terraform should validate cleanly and generate the exact inventory Ansible needs.
-
-### 2. Fix Jenkins JCasC structure
-
-Status: completed.
-
-Files touched:
-
-- `infra/ansible/templates/jenkins/jenkins.yaml.j2`
-
-Removed files:
-
-- `infra/ansible/files/jenkins/jenkins.yaml`
-
-Completed changes:
-
-1. Merge the duplicate top-level `jenkins:` sections into one valid block.
-2. Keep the admin user, authorization strategy, and node config together under the active `jenkins:` block.
-3. Keep credentials and jobs as separate top-level JCasC sections.
-4. Remove the old static `files/jenkins/jenkins.yaml` file.
-5. Set the Jenkins worker labels consistently.
-
-Recommended label:
+Current state:
 
 ```text
-linux docker worker
+Jenkins polls GitHub every couple minutes.
 ```
 
-Reason:
-
-- The test job expects label `worker`.
-- The worker is also a Linux Docker-capable node.
-
-### 3. Harden Jenkins secrets handling
-
-Status: completed for Jenkins manager bootstrap.
-
-Files touched:
-
-- `.env.example`
-- `.gitignore`
-- `scripts/deploy_infra.sh`
-- `infra/ansible/site.yml`
-- `infra/ansible/templates/jenkins/jenkins.yaml.j2`
-
-Completed changes:
-
-1. Stop hardcoding the Jenkins admin password directly in `site.yml`.
-2. Read it from `JENKINS_ADMIN_PASSWORD`.
-3. Fail with a clear message if no password is supplied.
-4. Write rendered JCasC with stricter permissions because it contains a private key.
-5. Load repo-root `.env` from `scripts/deploy_infra.sh` if present.
-6. Keep real `.env` ignored and commit only `.env.example`.
-7. Suppress Ansible logging for sensitive private-key read/render tasks.
-
-Recommended rendered JCasC mode:
+Future state:
 
 ```text
-0600
+GitHub push to main
+  -> webhook
+  -> Jenkins pipeline starts immediately
 ```
 
-Reason:
+This should wait until Jenkins has a stable HTTPS URL.
 
-- The current rendered JCasC includes the controller private key.
+### 2. Remote Terraform state
 
-### 4. Wire the Jenkins worker test job
-
-Status: completed as an inline JCasC job.
-
-Files touched:
-
-- `infra/ansible/templates/jenkins/jenkins.yaml.j2`
-- `infra/ansible/files/jenkins/plugins.txt`
-
-Removed files:
-
-- `infra/ansible/files/jenkins/seed.groovy`
-
-Completed changes:
-
-1. Define `test-agent` directly in the active JCasC template.
-2. Remove standalone `seed.groovy` to keep one source of truth.
-3. Confirm the job label matches the worker label.
-4. Keep the test job simple:
-   - show hostname
-   - show Java
-   - show Docker
-   - run `docker ps`
-
-Reason:
-
-- Before building a deploy job, we should prove Jenkins can use the worker.
-
-### 5. Configure the app server
-
-Files likely touched:
-
-- `infra/ansible/site.yml`
-- `infra/terraform/inventory.tpl`
-- maybe `infra/terraform/main.tf`
-
-Planned changes:
-
-1. Add an Ansible play for `app_server`.
-2. Install Docker.
-3. Enable and start Docker.
-4. Add `ubuntu` to the Docker group.
-5. Create an app directory, for example:
+Current state:
 
 ```text
-/opt/capstone-app
+Terraform state is local.
 ```
 
-6. Authorize the Jenkins controller public key on the app server.
-
-Reason:
-
-- The app server currently exists but has no deploy target setup.
-
-### 6. Add a real app deploy pipeline
-
-Files likely touched:
-
-- `Jenkinsfile`
-- app files, if missing
-- `infra/ansible/templates/jenkins/jenkins.yaml.j2`
-- `infra/ansible/files/jenkins/plugins.txt`
-
-Planned changes:
-
-1. Add or confirm a small app that can be containerized.
-2. Add a Dockerfile if one does not exist.
-3. Add a Jenkins pipeline job.
-4. Run the build on the Jenkins worker.
-5. Deploy to the app server over SSH.
-6. Start or restart the Docker container on the app server.
-7. Expose the app on `var.app_port`, currently `8081`.
-
-Potential plugin addition:
+Future state:
 
 ```text
-ssh-agent
+S3 backend for state
+DynamoDB table for locking
+restricted IAM access
+bucket encryption and versioning
 ```
 
-Reason:
+This is intentionally paused for now.
 
-- Pipeline deploy steps usually need a Jenkins SSH credential inside the build.
+### 3. Jenkins access hardening
 
-### 7. README and runbook
+Current lab state:
 
-Files likely touched:
+```text
+Jenkins is reachable on public port 8080 from my_ip_cidr.
+```
 
-- `README.md`
-- `docs/current-flow.md`
-- maybe another runbook under `docs/`
+Future options:
 
-Planned changes:
+- HTTPS reverse proxy or ALB.
+- DNS name.
+- VPN/private access.
+- SSO or stronger auth model.
 
-1. Explain the architecture.
-2. List required parameters.
-3. Show local prerequisites.
-4. Show safe validation commands.
-5. Show deploy commands for the user to run manually.
-6. Show teardown commands for avoiding AWS charges.
-7. Add screenshot checklist for the portfolio.
+### 4. Token separation
 
-Reason:
+Current state:
 
-- This project should be understandable as a portfolio project and as a lab runbook.
+```text
+Docker Hub credentials are supplied from repo-root .env.
+```
 
-## Validation Plan
+Future state:
 
-Local validation only:
+- Terraform token for Docker Hub repository management.
+- Jenkins token for image push/pull.
+- Narrower permissions for each token.
 
-1. `terraform fmt -check -recursive`
-2. `terraform validate`
-3. `ansible-playbook --syntax-check`
-4. `git diff --check`
+### 5. Terraform cleanup
 
-Manual AWS validation after the user runs deploy:
+Potential follow-ups:
 
-1. Confirm EC2 instances exist.
-2. Confirm security group rules.
-3. Confirm generated inventory.
-4. Confirm Ansible completes.
-5. Open Jenkins UI.
-6. Confirm worker node is online.
-7. Run test job.
-8. Run deploy job.
-9. Open app URL on the app server.
+- Review unused variables.
+- Add explicit `hashicorp/local` provider requirement if desired.
+- Move generated inventory ownership fully into Terraform/runbook.
+- Add backend configuration when remote state is ready.
 
-## Things Not To Run Automatically
+## Normal Runbook
 
-Do not run these unless explicitly requested:
+Deploy infrastructure and configure Jenkins:
 
-- `terraform apply`
-- `terraform destroy`
-- `scripts/deploy_infra.sh`
-- Any Jenkins deploy job against live AWS infrastructure
-- Any AWS cleanup command
+```bash
+./scripts/deploy_infra.sh
+```
 
-## Suggested Next Step
+Validate locally:
 
-Start with the next infrastructure/app-server checkpoint:
+```bash
+cd infra/terraform
+terraform validate
+```
 
-1. Fix Terraform hygiene and provider declarations.
-2. Add app server private IP to the generated inventory.
-3. Configure the app server with Docker and a deploy directory.
-4. Authorize Jenkins SSH access to the app server.
+```bash
+cd infra/ansible
+ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
+```
 
-That gives a clean checkpoint before adding the real app deploy pipeline.
+Tear down AWS resources when done with a lab session. Preserve Docker Hub repo unless intentionally cleaning the registry too.
