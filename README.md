@@ -1,8 +1,10 @@
 # DevOps Capstone Two
 
-This repo is an AWS-based Jenkins CI/CD lab. It uses Terraform for infrastructure, Ansible for server configuration, Jenkins Configuration as Code for Jenkins state, and Docker Hub as the image registry.
+This repo is an AWS-based Jenkins CI/CD lab. It uses Terraform stacks for infrastructure lifecycle boundaries, Ansible for server configuration, Jenkins Configuration as Code for Jenkins state, and Docker Hub as the image registry.
 
 ## Architecture
+
+Application delivery flow:
 
 ```text
 GitHub main
@@ -17,28 +19,85 @@ GitHub main
 Provisioning flow:
 
 ```text
-Local machine
-  -> scripts/deploy_infra.sh
-  -> Terraform creates AWS resources and Docker Hub repo
-  -> Terraform writes generated Ansible inventory
-  -> Ansible configures Jenkins manager, Jenkins worker, and app server
-  -> Jenkins runs the app deploy pipeline from Jenkinsfile
+scripts/deploy_infra.sh
+  -> Terraform registry stack
+  -> Terraform CI stack
+  -> Terraform app stack
+  -> Ansible AWS dynamic inventory
+  -> Ansible configures Jenkins manager, worker, and app server
 ```
 
-## What Terraform Manages
+## Terraform Layout
 
-- Security group for SSH, Jenkins, and app access.
-- Jenkins manager EC2 instance.
-- Jenkins worker EC2 instance.
-- App server EC2 instance.
-- Generated Ansible inventory at `infra/ansible/inventory/hosts.ini`.
-- Docker Hub repository, for example:
+Terraform is split by lifecycle, not just by file size.
 
 ```text
-docker.io/salorozco23/capstone-nginx
+infra/terraform/
+  modules/
+    dockerhub_repository/
+    ec2_instance/
+    security_group/
+
+  stacks/
+    registry/
+    ci/
+    app/
 ```
 
-Terraform state is still local in this repo. Remote state is intentionally not configured yet.
+Modules are reusable infrastructure recipes. Stacks are deployable units with their own state.
+
+### Registry Stack
+
+Owns Docker Hub repository lifecycle:
+
+```text
+docker.io/<DOCKERHUB_NAMESPACE>/<DOCKERHUB_REPOSITORY_NAME>
+```
+
+This stack is long-lived and should usually survive AWS teardown.
+
+### CI Stack
+
+Owns Jenkins platform infrastructure:
+
+```text
+Jenkins manager EC2
+Jenkins worker EC2
+CI security group
+```
+
+This stack can be reused across app deployments.
+
+### App Stack
+
+Owns app runtime infrastructure:
+
+```text
+App server EC2
+App security group
+```
+
+This stack can be destroyed independently from Jenkins and Docker Hub.
+
+## Ansible Inventory
+
+Ansible now uses AWS dynamic inventory instead of a Terraform-generated `hosts.ini`.
+
+Inventory file:
+
+```text
+infra/ansible/inventory/aws_ec2.yml
+```
+
+Terraform tags EC2 instances with:
+
+```text
+Project=devops-capstone-two
+Environment=lab
+AnsibleGroup=jenkins_manager | jenkins_worker | app_server
+```
+
+Ansible discovers the running EC2 instances from those tags.
 
 ## What Ansible Configures
 
@@ -94,9 +153,21 @@ DOCKERHUB_NAMESPACE='your-dockerhub-username-or-org'
 DOCKERHUB_REPOSITORY_NAME='capstone-nginx'
 ```
 
-Do not commit `.env`. Use `.env.example` as the safe template.
+Create `infra/terraform/terraform.tfvars` with AWS values:
 
-## Run
+```hcl
+aws_region                = "us-east-1"
+jenkins_manager_subnet_id = "subnet-..."
+jenkins_worker_subnet_id  = "subnet-..."
+app_server_subnet_id      = "subnet-..."
+key_name                  = "your-ec2-keypair"
+my_ip_cidr                = "x.x.x.x/32"
+vpc_id                    = "vpc-..."
+```
+
+Do not commit `.env` or `terraform.tfvars`.
+
+## Full Deploy
 
 From the repo root:
 
@@ -104,19 +175,20 @@ From the repo root:
 ./scripts/deploy_infra.sh
 ```
 
-This runs `terraform apply -auto-approve`, waits for SSH, then runs the Ansible playbook.
+This applies the stacks in order:
+
+```text
+registry
+ci
+app
+```
+
+Then it runs Ansible against dynamic AWS inventory.
 
 After provisioning, Jenkins is available at:
 
 ```text
 http://<JENKINS_MANAGER_PUBLIC_IP>:8080
-```
-
-Login:
-
-```text
-user: admin
-password: value from JENKINS_ADMIN_PASSWORD
 ```
 
 The app is available after a successful deploy job at:
@@ -125,22 +197,48 @@ The app is available after a successful deploy job at:
 http://<APP_SERVER_PUBLIC_IP>:8081
 ```
 
-## Teardown
+## Targeted Teardown
 
-To stop AWS hourly charges, destroy the AWS resources. The Docker Hub repo can be preserved separately if desired.
+Destroy only the app stack:
 
-The latest teardown preserved the Docker Hub repository and destroyed the EC2/security group resources.
+```bash
+./scripts/destroy_app.sh
+```
+
+Destroy only the CI stack after app is gone:
+
+```bash
+./scripts/destroy_ci.sh
+```
+
+Destroy AWS lab resources while preserving Docker Hub:
+
+```bash
+./scripts/destroy_all_aws.sh
+```
+
+The registry stack is intentionally not destroyed by `destroy_all_aws.sh`.
 
 ## Validation
 
 ```bash
-cd infra/terraform
+cd infra/terraform/stacks/registry
+terraform validate
+```
+
+```bash
+cd infra/terraform/stacks/ci
+terraform validate
+```
+
+```bash
+cd infra/terraform/stacks/app
 terraform validate
 ```
 
 ```bash
 cd infra/ansible
-ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
+ansible-playbook --syntax-check site.yml
 ```
 
 ```bash
@@ -150,6 +248,6 @@ bash -n scripts/deploy_app.sh
 
 ## Notes
 
-- `infra/ansible/inventory/hosts.ini` is generated by Terraform and ignored by Git.
-- Jenkins currently uses SCM polling. GitHub webhooks are a future production-style improvement.
-- Remote Terraform state is a future improvement and is not implemented yet.
+- Remote Terraform state is not implemented yet.
+- GitHub webhooks are not implemented yet; Jenkins currently uses SCM polling.
+- The Docker Hub repo is a separate stack because it has a different lifecycle from the AWS lab resources.

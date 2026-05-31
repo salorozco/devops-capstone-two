@@ -2,159 +2,218 @@
 
 Last updated: 2026-05-31
 
-This project now has a full Terraform, Ansible, Jenkins, Docker Hub, and app-server deployment flow.
+The project is now split into Terraform modules and lifecycle-specific stacks.
 
-## High-level Flow
+## Stack Flow
 
 ```text
-scripts/deploy_infra.sh
-  -> Terraform
-  -> AWS EC2 resources
+registry stack
   -> Docker Hub repository
-  -> generated Ansible inventory
-  -> Ansible
-  -> Jenkins manager + worker + app server
-  -> Jenkins deploy pipeline
-  -> Docker Hub image
-  -> app server container
-  -> smoke test
+
+ci stack
+  -> Jenkins manager
+  -> Jenkins worker
+  -> CI security group
+
+app stack
+  -> App server
+  -> App security group
+
+Ansible
+  -> discovers EC2 instances by tags
+  -> configures Jenkins and app runtime
 ```
+
+## Why Stacks
+
+The project has resources with different lifecycles:
+
+```text
+Docker Hub repo
+  long-lived
+  kept when AWS lab resources are destroyed
+
+Jenkins manager/worker
+  reusable CI platform
+  can survive app stack rebuilds
+
+App server
+  short-lived app runtime
+  can be destroyed independently
+```
+
+That is why Terraform is split into:
+
+```text
+infra/terraform/stacks/registry
+infra/terraform/stacks/ci
+infra/terraform/stacks/app
+```
+
+Each stack is a Terraform root module and has its own local state.
+
+## Modules
+
+Reusable modules live under:
+
+```text
+infra/terraform/modules
+```
+
+Current modules:
+
+```text
+dockerhub_repository
+ec2_instance
+security_group
+```
+
+Stacks call modules. Modules do not own state by themselves.
 
 ## Deploy Script
 
-File: `scripts/deploy_infra.sh`
+File:
+
+```text
+scripts/deploy_infra.sh
+```
 
 The script:
 
-1. Loads repo-root `.env` if present.
-2. Requires Jenkins, GitHub, and Docker Hub environment variables.
-3. Exports Docker Hub variables for the Docker Terraform provider.
-4. Runs `terraform init -upgrade`.
-5. Runs `terraform apply -auto-approve`.
-6. Verifies `infra/ansible/inventory/hosts.ini` was generated.
-7. Waits for SSH with Ansible ping.
-8. Runs `ansible-playbook -i inventory/hosts.ini site.yml`.
+1. Loads repo-root `.env`.
+2. Requires Jenkins, GitHub, and Docker Hub credentials.
+3. Applies the registry stack.
+4. Applies the CI stack.
+5. Reads `ci_security_group_id` from the CI stack.
+6. Applies the app stack with that CI security group ID.
+7. Shows Terraform outputs.
+8. Uses Ansible AWS dynamic inventory.
+9. Waits until all three EC2 hosts are reachable by SSH.
+10. Runs `infra/ansible/site.yml`.
 
-## Terraform
+## Terraform Registry Stack
 
-Main files:
-
-- `infra/terraform/main.tf`
-- `infra/terraform/variables.tf`
-- `infra/terraform/outputs.tf`
-- `infra/terraform/inventory.tpl`
-- `infra/terraform/versions.tf`
-
-Terraform manages:
-
-- AWS provider in `us-east-1` by default.
-- Docker provider for Docker Hub.
-- Docker Hub repository:
+Path:
 
 ```text
-docker.io/<dockerhub_namespace>/<dockerhub_repository_name>
+infra/terraform/stacks/registry
 ```
 
-- Security group `capstone-sg`.
-- Jenkins manager EC2.
-- Jenkins worker EC2.
-- App server EC2.
-- Generated Ansible inventory.
+Owns:
 
-Security group rules:
+```text
+docker_hub_repository
+```
 
-- SSH `22` from `var.my_ip_cidr`.
-- Jenkins `8080` from `var.my_ip_cidr`.
-- App `var.app_port`, default `8081`, from `var.my_ip_cidr`.
-- SSH between instances in the same security group.
+Output:
+
+```text
+image_repository
+```
+
+Example:
+
+```text
+docker.io/salorozco23/capstone-nginx
+```
+
+## Terraform CI Stack
+
+Path:
+
+```text
+infra/terraform/stacks/ci
+```
+
+Owns:
+
+```text
+capstone-ci-sg
+capstone-jenkins-manager
+capstone-jenkins-worker
+```
+
+The CI security group allows:
+
+- SSH from `my_ip_cidr`.
+- Jenkins UI `8080` from `my_ip_cidr`.
+- SSH between Jenkins manager and worker.
 - All outbound traffic.
 
-## Generated Inventory
+## Terraform App Stack
 
-Template:
-
-```text
-infra/terraform/inventory.tpl
-```
-
-Generated file:
+Path:
 
 ```text
-infra/ansible/inventory/hosts.ini
+infra/terraform/stacks/app
 ```
 
-Groups:
+Owns:
 
-- `jenkins_manager`
-- `jenkins_worker`
-- `app_server`
+```text
+capstone-app-sg
+capstone-app-server
+```
 
-Host vars:
+The app security group allows:
 
-- `jenkins_private_ip`
-- `app_private_ip`
+- SSH from `my_ip_cidr`.
+- App port `8081` from `my_ip_cidr`.
+- SSH from the CI security group.
+- All outbound traffic.
 
-The generated inventory is ignored by Git and recreated by Terraform.
+## Ansible Dynamic Inventory
 
-## Ansible
+Path:
 
-Main file:
+```text
+infra/ansible/inventory/aws_ec2.yml
+```
+
+It discovers running EC2 instances with:
+
+```text
+Project=devops-capstone-two
+Environment=lab
+```
+
+It creates groups from:
+
+```text
+AnsibleGroup=jenkins_manager
+AnsibleGroup=jenkins_worker
+AnsibleGroup=app_server
+```
+
+The inventory composes host vars:
+
+```text
+ansible_host
+ansible_user
+ansible_ssh_private_key_file
+jenkins_private_ip
+app_private_ip
+```
+
+## Ansible Playbook
+
+Path:
 
 ```text
 infra/ansible/site.yml
 ```
 
-Ansible configures:
+It configures:
 
-- Baseline apt cache updates on all hosts.
-- Jenkins worker with Java 21, Docker, and workspace directory.
-- App server with Docker, curl, Docker group access, and `/opt/capstone-app`.
-- Jenkins manager with Java 21, Jenkins, plugins, JCasC, credentials, node config, and jobs.
+- Jenkins worker with Java and Docker.
+- App server with Docker and curl.
+- Jenkins manager with Jenkins, plugins, credentials, JCasC, node, and jobs.
 
-Jenkins controller SSH key:
+Jenkins restart handlers run when plugin config, JCasC, or systemd config changes.
 
-- Generated on the Jenkins manager.
-- Added to the Jenkins worker.
-- Added to the app server.
-- Embedded into Jenkins credential `agent-ssh`.
+## Jenkins Deploy Pipeline
 
-## Jenkins Configuration
-
-JCasC template:
-
-```text
-infra/ansible/templates/jenkins/jenkins.yaml.j2
-```
-
-Configured items:
-
-- Local admin user.
-- Logged-in admin authorization strategy.
-- Worker node `jenkins-worker-1`.
-- SSH credential `agent-ssh`.
-- GitHub HTTPS credential `github-http`.
-- Docker Hub credential `dockerhub`.
-- Freestyle job `test-agent`.
-- Pipeline job `deploy-capstone-app`.
-
-Plugin list:
-
-```text
-infra/ansible/files/jenkins/plugins.txt
-```
-
-Important plugins:
-
-- Configuration as Code
-- Pipeline
-- Git
-- Job DSL
-- SSH agent support through Jenkins SSH node plugin
-- Pipeline Graph View
-
-## Deploy Pipeline
-
-Pipeline file:
+Path:
 
 ```text
 Jenkinsfile
@@ -172,35 +231,11 @@ Smoke Test
 Post Actions
 ```
 
-Behavior:
-
-1. Jenkins checks out `main`.
-2. Builds the Docker image on the Jenkins worker.
-3. Tags the image with the Git SHA and `latest`.
-4. Logs into Docker Hub with a temporary Docker config.
-5. Pushes both tags to Docker Hub.
-6. SSHs to the app server.
-7. App server logs into Docker Hub with a temporary Docker config.
-8. App server pulls the exact Git SHA tag.
-9. App server restarts the `capstone-nginx` container on port `8081`.
-10. Jenkins runs a smoke test through SSH:
-
-```text
-curl -fsS http://127.0.0.1:8081
-```
-
-## App
-
-Files:
-
-- `app/index.html`
-- `Dockerfile`
-
-The app is a static Nginx page that displays the pipeline flow.
+The deploy stage SSHs to the app server, pulls the image from Docker Hub, restarts the container, and then smoke-tests it.
 
 ## Current Known Gaps
 
-- GitHub webhook is not configured yet; Jenkins uses SCM polling.
-- Terraform state is still local.
-- Jenkins is exposed on public port `8080` during lab runs.
-- Docker Hub token separation can be improved by using separate Terraform and Jenkins tokens.
+- Remote Terraform state is not implemented yet.
+- GitHub webhook is not implemented yet.
+- Jenkins still uses public port `8080` restricted by `my_ip_cidr`.
+- Docker Hub credentials are still sourced from local `.env`.

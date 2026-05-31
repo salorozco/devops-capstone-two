@@ -1,0 +1,25 @@
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+
+filters:
+  tag:Project: devops-capstone-two
+  tag:Environment: lab
+  instance-state-name: running
+
+hostnames:
+  - public-ip-address
+
+compose:
+  ansible_host: public_ip_address
+  ansible_python_interpreter: "'/usr/bin/python3'"
+  ansible_ssh_common_args: "'-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'"
+  ansible_ssh_private_key_file: "'~/.ssh/capstone-key.pem'"
+  ansible_user: "'ubuntu'"
+  app_private_ip: private_ip_address
+  jenkins_private_ip: private_ip_address
+
+keyed_groups:
+  - key: tags.AnsibleGroup
+    prefix: ""
+    separator: ""

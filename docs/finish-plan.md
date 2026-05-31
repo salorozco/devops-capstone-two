@@ -2,44 +2,69 @@
 
 Last updated: 2026-05-31
 
-The core lab is now functional:
-
-```text
-Terraform
-  -> Ansible
-  -> Jenkins as Code
-  -> Jenkins worker build
-  -> Docker Hub push
-  -> app server pull/restart
-  -> smoke test
-```
+The lab now uses Terraform stacks and modules.
 
 ## Completed
 
-1. Terraform creates the AWS instances and security group.
-2. Terraform creates/manages the Docker Hub repository.
-3. Terraform generates the Ansible inventory.
-4. Ansible configures the Jenkins manager, Jenkins worker, and app server.
-5. Jenkins is bootstrapped through JCasC.
-6. Jenkins credentials are created through JCasC.
-7. Jenkins worker node is configured.
-8. `test-agent` verifies the worker.
-9. `deploy-capstone-app` runs from the root `Jenkinsfile`.
-10. The pipeline builds and pushes Docker images to Docker Hub.
-11. The app server pulls and runs the exact Git SHA image tag.
-12. The pipeline smoke-tests the running container.
-13. Docker credentials are cleaned up with temporary Docker config directories.
-14. Pipeline Graph View is installed for a better Jenkins UI.
-15. Generated Ansible inventory is ignored by Git.
+1. Terraform split into reusable modules:
+   - `dockerhub_repository`
+   - `ec2_instance`
+   - `security_group`
+2. Terraform split into lifecycle stacks:
+   - `registry`
+   - `ci`
+   - `app`
+3. Docker Hub repository separated from AWS lab resources.
+4. CI platform separated from app runtime infrastructure.
+5. App stack can be destroyed without deleting Jenkins or Docker Hub.
+6. Full deploy wrapper still exists through `scripts/deploy_infra.sh`.
+7. Ansible moved from generated `hosts.ini` to AWS dynamic inventory.
+8. Jenkins restart handlers added for JCasC/plugin/systemd changes.
+9. Jenkins pipeline builds, pushes, deploys, and smoke-tests the app.
 
 ## Remaining Production-style Improvements
 
-### 1. GitHub webhook
+### 1. Remote Terraform state
 
 Current state:
 
 ```text
-Jenkins polls GitHub every couple minutes.
+Each stack uses local state.
+```
+
+Future state:
+
+```text
+S3 backend per stack
+DynamoDB lock table
+state encryption
+restricted IAM access
+```
+
+This is intentionally paused for now.
+
+### 2. Stack output sharing
+
+Current state:
+
+```text
+scripts/deploy_infra.sh passes ci_security_group_id from CI stack to app stack.
+```
+
+Future state with remote state:
+
+```hcl
+data "terraform_remote_state" "ci" {}
+```
+
+That should wait until remote state is introduced.
+
+### 3. GitHub webhook
+
+Current state:
+
+```text
+Jenkins polls GitHub.
 ```
 
 Future state:
@@ -50,83 +75,75 @@ GitHub push to main
   -> Jenkins pipeline starts immediately
 ```
 
-This should wait until Jenkins has a stable HTTPS URL.
+This should wait until Jenkins has a stable HTTPS endpoint.
 
-### 2. Remote Terraform state
-
-Current state:
-
-```text
-Terraform state is local.
-```
-
-Future state:
-
-```text
-S3 backend for state
-DynamoDB table for locking
-restricted IAM access
-bucket encryption and versioning
-```
-
-This is intentionally paused for now.
-
-### 3. Jenkins access hardening
-
-Current lab state:
-
-```text
-Jenkins is reachable on public port 8080 from my_ip_cidr.
-```
+### 4. Jenkins access hardening
 
 Future options:
 
 - HTTPS reverse proxy or ALB.
 - DNS name.
-- VPN/private access.
-- SSO or stronger auth model.
+- Private/VPN access.
+- Stronger auth/SSO.
 
-### 4. Token separation
+### 5. Secret separation
 
 Current state:
 
 ```text
-Docker Hub credentials are supplied from repo-root .env.
+Docker Hub token comes from .env and is used for Terraform and Jenkins.
 ```
 
 Future state:
 
-- Terraform token for Docker Hub repository management.
-- Jenkins token for image push/pull.
+- Terraform Docker Hub token for repo management.
+- Jenkins Docker Hub token for image push/pull.
 - Narrower permissions for each token.
 
-### 5. Terraform cleanup
+### 6. Possible Ansible role split
 
-Potential follow-ups:
+Current state:
 
-- Review unused variables.
-- Add explicit `hashicorp/local` provider requirement if desired.
-- Move generated inventory ownership fully into Terraform/runbook.
-- Add backend configuration when remote state is ready.
+```text
+infra/ansible/site.yml is still mostly monolithic.
+```
 
-## Normal Runbook
+Future structure:
 
-Deploy infrastructure and configure Jenkins:
+```text
+roles/common
+roles/docker
+roles/jenkins_worker
+roles/app_server
+roles/jenkins_controller
+```
+
+This is a good next cleanup after stack behavior is validated.
+
+## Runbook
+
+Full deploy:
 
 ```bash
 ./scripts/deploy_infra.sh
 ```
 
-Validate locally:
+Destroy app only:
 
 ```bash
-cd infra/terraform
-terraform validate
+./scripts/destroy_app.sh
 ```
+
+Destroy CI only:
 
 ```bash
-cd infra/ansible
-ansible-playbook -i inventory/hosts.ini site.yml --syntax-check
+./scripts/destroy_ci.sh
 ```
 
-Tear down AWS resources when done with a lab session. Preserve Docker Hub repo unless intentionally cleaning the registry too.
+Destroy AWS lab resources but keep Docker Hub:
+
+```bash
+./scripts/destroy_all_aws.sh
+```
+
+Registry stack is intentionally excluded from AWS teardown.
