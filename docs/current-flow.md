@@ -52,6 +52,19 @@ infra/terraform/stacks/app
 
 Each stack is a Terraform root module and has its own local state.
 
+Example state boundaries:
+
+```text
+stacks/registry/terraform.tfstate
+  Docker Hub repo only
+
+stacks/ci/terraform.tfstate
+  Jenkins manager, Jenkins worker, CI security group
+
+stacks/app/terraform.tfstate
+  App server, app security group
+```
+
 ## Modules
 
 Reusable modules live under:
@@ -90,6 +103,20 @@ The script:
 8. Uses Ansible AWS dynamic inventory.
 9. Waits until all three EC2 hosts are reachable by SSH.
 10. Runs `infra/ansible/site.yml`.
+
+The app stack depends on the CI stack output. The deploy script passes that
+value explicitly:
+
+```bash
+ci_security_group_id="$(terraform -chdir="$CI_STACK" output -raw ci_security_group_id)"
+
+terraform -chdir="$APP_STACK" apply \
+  -var-file="$TF_VAR_FILE" \
+  -var "ci_security_group_id=$ci_security_group_id"
+```
+
+That keeps the two state files separate while still allowing the app security
+group to trust SSH from Jenkins.
 
 ## Terraform Registry Stack
 

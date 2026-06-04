@@ -46,6 +46,8 @@ infra/terraform/
 
 Modules are reusable infrastructure recipes. Stacks are deployable units with their own state.
 
+Detailed Terraform examples are in `infra/terraform/README.md`.
+
 ### Registry Stack
 
 Owns Docker Hub repository lifecycle:
@@ -196,6 +198,27 @@ The app is available after a successful deploy job at:
 ```text
 http://<APP_SERVER_PUBLIC_IP>:8081
 ```
+
+## Terraform Stack Examples
+
+Plan only the CI platform:
+
+```bash
+terraform -chdir=infra/terraform/stacks/ci plan \
+  -var-file=../../terraform.tfvars
+```
+
+Plan only the app server after the CI stack exists:
+
+```bash
+ci_security_group_id="$(terraform -chdir=infra/terraform/stacks/ci output -raw ci_security_group_id)"
+
+terraform -chdir=infra/terraform/stacks/app plan \
+  -var-file=../../terraform.tfvars \
+  -var "ci_security_group_id=$ci_security_group_id"
+```
+
+The app stack needs the CI security group ID so Jenkins can SSH to the app server.
 
 ## Targeted Teardown
 

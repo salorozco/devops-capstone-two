@@ -107,15 +107,22 @@ ansible-inventory -i "$INV_FILE" --graph
 
 echo
 echo "== Wait for SSH (instances still booting sometimes) =="
+ssh_ready=false
 for i in {1..12}; do
   if ansible -i "$INV_FILE" all --list-hosts 2>/dev/null | grep -q 'hosts (3)' \
     && ansible -i "$INV_FILE" all -m ping >/dev/null 2>&1; then
     echo "SSH ready"
+    ssh_ready=true
     break
   fi
   echo "Not ready yet... retry $i/12"
   sleep 10
 done
+
+if [[ "$ssh_ready" != true ]]; then
+  echo "ERROR: Expected three reachable EC2 hosts, but SSH did not become ready."
+  exit 1
+fi
 
 echo
 echo "== Run Ansible playbook =="
