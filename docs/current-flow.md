@@ -1,6 +1,6 @@
 # Current Infrastructure Flow
 
-Last updated: 2026-05-31
+Last updated: 2026-06-04
 
 The project is now split into Terraform modules and lifecycle-specific stacks.
 
@@ -82,6 +82,49 @@ security_group
 ```
 
 Stacks call modules. Modules do not own state by themselves.
+
+## How Modules and Stacks Work Together
+
+Modules provide reusable resource implementations. Stacks provide the concrete
+values for a deployment, connect modules together, and own the resulting state.
+
+```text
+terraform.tfvars or environment variables
+  -> stack variables
+  -> module inputs
+  -> module resources
+  -> module outputs
+  -> stack outputs
+```
+
+The `ec2_instance` module is used by multiple stacks:
+
+```text
+ci stack
+  -> module.jenkins_manager
+  -> module.jenkins_worker
+
+app stack
+  -> module.app_server
+```
+
+Each module call creates a separate EC2 instance. The CI stack owns the Jenkins
+instances in CI state, while the app stack owns the app server in app state.
+
+Stack variables and module variables are not the same variable. A module call
+connects the two scopes explicitly:
+
+```hcl
+instance_type = var.jenkins_manager_instance_type
+```
+
+The left side is the EC2 module input. The right side is the CI stack variable.
+
+Detailed examples are documented in:
+
+```text
+infra/terraform/README.md
+```
 
 ## Deploy Script
 

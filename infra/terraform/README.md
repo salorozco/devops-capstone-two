@@ -55,6 +55,171 @@ stacks/app
   owns app server and app security group state
 ```
 
+### Mental Model
+
+The closest programming comparison is:
+
+```text
+Terraform module       = reusable class or constructor
+module variables       = constructor inputs
+module resources       = reusable implementation
+module outputs         = public return values
+stack                  = application code that creates and connects module instances
+stack state            = record of the real infrastructure created by that stack
+```
+
+This is composition, not inheritance. A stack can instantiate the same module
+multiple times with different inputs.
+
+For example, the CI stack creates two different EC2 instances from the same
+`ec2_instance` module:
+
+```text
+module.jenkins_manager
+  -> modules/ec2_instance
+  -> one Jenkins manager EC2 instance
+
+module.jenkins_worker
+  -> modules/ec2_instance
+  -> one Jenkins worker EC2 instance
+```
+
+The app stack also uses the same module:
+
+```text
+module.app_server
+  -> modules/ec2_instance
+  -> one app server EC2 instance
+```
+
+### Module File Roles
+
+Terraform loads every `.tf` file in a directory together. Filenames such as
+`main.tf`, `variables.tf`, and `outputs.tf` are conventions for readability,
+not an execution order.
+
+The `ec2_instance` module is organized like this:
+
+```text
+modules/ec2_instance/
+  variables.tf  declares the inputs accepted by the module
+  main.tf       contains the EC2 resource and internal local values
+  outputs.tf    exposes selected EC2 attributes to callers
+  versions.tf   declares the AWS provider requirement
+```
+
+Terraform treats those files as one module:
+
+```text
+variables.tf + main.tf + outputs.tf + versions.tf = ec2_instance module
+```
+
+That is also why the registry stack has a `main.tf`, while the larger CI and app
+stacks use files such as `instances.tf` and `security_group.tf`. The filenames
+can differ without changing Terraform behavior.
+
+### Stack and Module Variable Scope
+
+Stack variables and module variables use the same Terraform syntax, but they
+are separate values in separate scopes.
+
+The CI stack declares a variable for its Jenkins manager:
+
+```hcl
+# stacks/ci/variables.tf
+variable "jenkins_manager_instance_type" {
+  type    = string
+  default = "t3.small"
+}
+```
+
+The EC2 module declares a more general input:
+
+```hcl
+# modules/ec2_instance/variables.tf
+variable "instance_type" {
+  type = string
+}
+```
+
+The module call connects them:
+
+```hcl
+module "jenkins_manager" {
+  source = "../../modules/ec2_instance"
+
+  instance_type = var.jenkins_manager_instance_type
+}
+```
+
+The left side is the module input. The right side is the stack variable:
+
+```text
+instance_type                        = var.jenkins_manager_instance_type
+module variable name                   stack variable name
+```
+
+The names do not have to match. The complete value flow is:
+
+```text
+terraform.tfvars
+  -> stack var.jenkins_manager_instance_type
+  -> module input instance_type
+  -> module var.instance_type
+  -> aws_instance.this.instance_type
+```
+
+### Module Outputs and Stack Outputs
+
+Modules expose only the values that callers need. The EC2 module creates an
+internal resource named `aws_instance.this` and exposes its IP addresses:
+
+```hcl
+# modules/ec2_instance/outputs.tf
+output "public_ip" {
+  value = aws_instance.this.public_ip
+}
+```
+
+The CI stack reads that module output and can expose it again as a stack output:
+
+```hcl
+# stacks/ci/outputs.tf
+output "jenkins_manager_public_ip" {
+  value = module.jenkins_manager.public_ip
+}
+```
+
+The complete output flow is:
+
+```text
+aws_instance.this.public_ip
+  -> module.jenkins_manager.public_ip
+  -> stack output jenkins_manager_public_ip
+  -> terraform output
+```
+
+### What Owns the Resource
+
+The module defines how to create a resource, but the calling stack owns the
+created resource in its state.
+
+For example, the Jenkins manager resource is recorded in the CI stack state
+with an address similar to:
+
+```text
+module.jenkins_manager.aws_instance.this
+```
+
+The app server is recorded in the app stack state:
+
+```text
+module.app_server.aws_instance.this
+```
+
+They use the same reusable module implementation, but they are separate real
+resources owned by separate stacks.
+
 ## Lifecycle Boundaries
 
 The stacks are split by what should be created and destroyed together.
@@ -111,6 +276,60 @@ module "repository" {
   name      = var.dockerhub_repository_name
 }
 ```
+
+The registry value flow starts in the repo-root `.env` file. Terraform does not
+read `.env` directly, so `scripts/deploy_infra.sh` exports values in the names
+expected by Terraform and the Docker Hub provider:
+
+```text
+.env DOCKERHUB_USERNAME
+  -> DOCKER_USERNAME
+  -> Docker Hub provider authentication
+
+.env DOCKERHUB_TOKEN
+  -> DOCKER_PASSWORD
+  -> Docker Hub provider authentication
+
+.env DOCKERHUB_NAMESPACE
+  -> TF_VAR_dockerhub_namespace
+  -> stack var.dockerhub_namespace
+  -> module input namespace
+  -> module var.namespace
+  -> docker_hub_repository.this.namespace
+```
+
+Authentication values answer who is allowed to call Docker Hub. Terraform
+variables describe which repository should exist.
+
+## How Terraform Evaluates a Stack
+
+When Terraform runs against a stack directory, it:
+
+1. Loads every `.tf` file in that stack directory.
+2. Reads the stack variables from defaults, `terraform.tfvars`, `-var`,
+   `-var-file`, or `TF_VAR_` environment variables.
+3. Loads the modules referenced by each `module` block.
+4. Passes stack values into module inputs.
+5. Builds a dependency graph from module outputs and resource references.
+6. Uses the configured providers to create, update, or destroy resources.
+7. Records the resulting resources in that stack's state file.
+
+For the CI stack, the dependency graph includes:
+
+```text
+CI security group
+  -> Jenkins manager EC2 instance
+  -> Jenkins worker EC2 instance
+```
+
+Both EC2 module calls depend on the security group module output:
+
+```hcl
+security_group_ids = [module.ci_security_group.id]
+```
+
+Terraform understands that the security group must exist before the instances
+can be created.
 
 ## Full Deploy
 
