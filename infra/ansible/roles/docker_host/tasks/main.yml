@@ -1,0 +1,35 @@
+---
+- name: Install Docker packages
+  apt:
+    name: "{{ docker_host_docker_packages }}"
+    state: present
+    update_cache: yes
+  notify: Restart Docker
+
+- name: Install extra host packages
+  apt:
+    name: "{{ docker_host_extra_packages }}"
+    state: present
+    update_cache: yes
+  when: docker_host_extra_packages | length > 0
+
+- name: Enable and start Docker
+  systemd:
+    name: docker
+    enabled: yes
+    state: started
+
+- name: Add user to docker group
+  user:
+    name: "{{ docker_host_user }}"
+    groups: docker
+    append: yes
+
+- name: Create host directories
+  file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default(docker_host_user) }}"
+    group: "{{ item.group | default(docker_host_user) }}"
+    mode: "{{ item.mode | default('0755') }}"
+  loop: "{{ docker_host_directories }}"

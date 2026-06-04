@@ -1,0 +1,14 @@
+---
+- name: Restart Jenkins service
+  listen: Restart Jenkins
+  systemd:
+    name: jenkins
+    enabled: yes
+    state: restarted
+
+- name: Wait for Jenkins after restart
+  listen: Restart Jenkins
+  wait_for:
+    host: 127.0.0.1
+    port: "{{ jenkins_http_port }}"
+    timeout: 240

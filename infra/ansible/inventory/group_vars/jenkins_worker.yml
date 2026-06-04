@@ -1,0 +1,15 @@
+---
+docker_host_extra_packages:
+  - openjdk-21-jre
+
+docker_host_directories:
+  - path: /home/ubuntu/jenkins
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+
+smoke_test_commands:
+  - name: Docker
+    command: docker --version
+  - name: Java
+    command: java -version

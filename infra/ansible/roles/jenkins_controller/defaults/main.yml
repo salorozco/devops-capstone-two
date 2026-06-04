@@ -1,0 +1,20 @@
+---
+jenkins_http_port: 8080
+jenkins_admin_password: "{{ lookup('env', 'JENKINS_ADMIN_PASSWORD') }}"
+github_username: "{{ lookup('env', 'GITHUB_USERNAME') }}"
+github_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+dockerhub_username: "{{ lookup('env', 'DOCKERHUB_USERNAME') }}"
+dockerhub_token: "{{ lookup('env', 'DOCKERHUB_TOKEN') }}"
+dockerhub_namespace: "{{ lookup('env', 'DOCKERHUB_NAMESPACE') | default(lookup('env', 'DOCKERHUB_USERNAME'), true) }}"
+dockerhub_repository_name: "{{ lookup('env', 'DOCKERHUB_REPOSITORY_NAME') | default('capstone-nginx', true) }}"
+
+jenkins_casc_dir: /var/lib/jenkins/casc
+jenkins_plugins_file: /var/lib/jenkins/plugins.txt
+
+jenkins_war: /usr/share/java/jenkins.war
+jenkins_plugin_mgr_jar: /opt/jenkins-plugin-manager.jar
+jenkins_plugin_mgr_version: "2.13.2"
+
+jenkins_controller_ssh_dir: /var/lib/jenkins/.ssh
+jenkins_controller_agent_key: /var/lib/jenkins/.ssh/jenkins_agent
+jenkins_controller_agent_pub: /var/lib/jenkins/.ssh/jenkins_agent.pub

@@ -1,0 +1,6 @@
+---
+docker_host_user: ubuntu
+docker_host_docker_packages:
+  - docker.io
+docker_host_extra_packages: []
+docker_host_directories: []

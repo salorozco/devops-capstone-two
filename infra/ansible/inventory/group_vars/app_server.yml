@@ -1,0 +1,15 @@
+---
+docker_host_extra_packages:
+  - curl
+
+docker_host_directories:
+  - path: /opt/capstone-app
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+
+smoke_test_commands:
+  - name: Docker
+    command: docker --version
+  - name: curl
+    command: curl --version

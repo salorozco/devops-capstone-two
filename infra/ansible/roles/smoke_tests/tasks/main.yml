@@ -1,0 +1,7 @@
+---
+- name: Run smoke test commands
+  command: "{{ item.command }}"
+  changed_when: false
+  loop: "{{ smoke_test_commands }}"
+  loop_control:
+    label: "{{ item.name }}"
